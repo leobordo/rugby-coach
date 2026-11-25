@@ -22,8 +22,8 @@ const routes = [
   [/^\/esercizio\/([^/]+)$/, (r, m, q) => exerciseView(r, { id: m[1] }, q), 'libreria'],
   [/^\/rosa$/, (r, m, q) => rosterView(r, {}, q), 'rosa'],
   [/^\/impostazioni$/, (r) => settingsView(r), 'impostazioni'],
-  [/^\/benvenuto$/, (r) => onboardingView(r), 'impostazioni'],
-  [/^\/guida$/, (r) => docView(r, 'guida'), 'impostazioni'],
+  [/^\/benvenuto$/, (r) => onboardingView(r), 'benvenuto'],
+  [/^\/guida$/, (r) => docView(r, 'info'), 'impostazioni'],
   [/^\/info$/, (r) => docView(r, 'info'), 'impostazioni'],
 ];
 
@@ -43,6 +43,7 @@ async function route() {
     const m = re.exec(path);
     if (!m) continue;
     document.querySelectorAll('.main-nav a, .bottom-nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === nav));
+    document.body.dataset.route = nav;
     const container = h('div.view-inner');
     clear(main);
     main.append(container);
@@ -69,15 +70,26 @@ function header() {
   window.addEventListener('online', updNet);
   window.addEventListener('offline', updNet);
   updNet();
-  const syncInd = h('button.sync-ind', { type: 'button', title: 'Stato Google Drive', on: { click: () => { location.hash = '#/impostazioni'; } } });
+  const syncInd = h('button.sync-ind', { type: 'button', title: 'Google Drive', on: { click: () => { location.hash = '#/impostazioni'; } } });
+  // UN solo invito, non bloccante, quando l'accesso a Drive è scaduto e c'è qualcosa da salvare.
+  // Il tocco è un gesto dell'utente: la finestra di Google si apre e si chiude da sola (prompt '').
+  const invite = h('button.drive-invite', { type: 'button', hidden: true, on: { click: () => {
+    const p = sync.syncNow(); // subito, dentro il tocco
+    invite.disabled = true;
+    p.then(() => toast('Salvato su Drive ✓', 'ok'), (e) => toast(sync.friendlyError(e), 'error', 5000)).finally(() => { invite.disabled = false; });
+  } } }, h('span.di-ico', { 'aria-hidden': 'true' }, '☁'), h('span', 'Tocca per salvare su Drive'));
+  document.body.append(invite);
   const updSync = (st = sync.state) => {
-    if (!st.configured) { syncInd.textContent = 'Solo locale'; syncInd.className = 'sync-ind local'; return; }
-    if (!st.folder) { syncInd.textContent = 'Drive non collegato'; syncInd.className = 'sync-ind warn'; return; }
-    if (st.running) { syncInd.textContent = 'Drive ✓ · invio…'; syncInd.className = 'sync-ind syncing'; return; }
-    if (st.needsAuth) { syncInd.textContent = 'Accedi per sincronizzare'; syncInd.className = 'sync-ind warn'; return; }
+    invite.hidden = !(st.configured && st.folder && st.needsAuth && !st.running && navigator.onLine);
+    document.body.classList.toggle('has-invite', !invite.hidden);
+    if (!st.configured || !st.folder) { syncInd.textContent = 'Sul telefono'; syncInd.className = 'sync-ind local'; return; }
+    if (st.running) { syncInd.textContent = 'Drive ✓ · salvo…'; syncInd.className = 'sync-ind syncing'; return; }
+    if (st.needsAuth) { syncInd.textContent = 'Da salvare su Drive'; syncInd.className = 'sync-ind warn'; return; }
     syncInd.textContent = 'Drive ✓'; syncInd.className = 'sync-ind synced';
   };
   repo.bus.addEventListener('sync-state', (e) => updSync(e.detail));
+  window.addEventListener('online', () => updSync());
+  window.addEventListener('offline', () => updSync());
   updSync();
   const nav = (href, key, label) => h('a', { href, dataset: { nav: key } }, label);
   const bnav = (href, key, ico, label) => h('a', { href, dataset: { nav: key } }, h('span.bn-ico', { 'aria-hidden': 'true' }, ico), h('span', label));

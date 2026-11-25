@@ -6,6 +6,7 @@ import { openBoardEditor } from '../board/editor.js';
 import { safeThumb } from '../board/model.js';
 import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
+import { shareOrDownload } from '../share.js';
 
 // ---------- autosave (R7) ----------
 const active = new Set();
@@ -28,6 +29,7 @@ export function autosaver(rec, { delay = 500, onSaved } = {}) {
     // un elemento di esempio modificato dall'utente diventa suo (non verrà eliminato con "Elimina esempi")
     changed() { if (rec.example) rec.example = false; dirty = true; pill.setUnsaved(); doSave(); },
     flush() { if (dirty) doSave.flush(); },
+    isDirty() { return dirty; },
     dispose() { api.flush(); active.delete(api); },
   };
   active.add(api);
@@ -35,7 +37,7 @@ export function autosaver(rec, { delay = 500, onSaved } = {}) {
 }
 
 export function statusPill(kind, id) {
-  const el = h('span.status-pill.local', { role: 'status', 'aria-live': 'polite' }, 'Salvato in locale');
+  const el = h('span.status-pill.local', { role: 'status', 'aria-live': 'polite' }, 'Salvato sul telefono');
   let unsaved = false;
   const show = (lab) => { el.className = 'status-pill ' + lab.cls; el.textContent = lab.text; el.title = lab.title || ''; };
   let wasConnected = false;
@@ -56,7 +58,7 @@ export function statusPill(kind, id) {
     repo.bus.removeEventListener('sync-entry', onEntry);
     repo.bus.removeEventListener('sync-state', onState);
   };
-  el.setUnsaved = () => { unsaved = true; el.className = 'status-pill unsaved'; el.textContent = 'Salvataggio…'; };
+  el.setUnsaved = () => { unsaved = true; el.className = 'status-pill unsaved'; el.textContent = 'Salvo…'; };
   setTimeout(refresh, 0);
   requestAnimationFrame(() => setTimeout(refresh, 50));
   return el;
@@ -71,31 +73,71 @@ export function pageHeader(title, { sub, actions = [], back } = {}) {
     actions.length ? h('div.page-actions', actions) : null);
 }
 
-// ---------- azioni documento (Drive / Word / stampa) ----------
+// ---------- azioni documento: Condividi (Word) + menu "Altro" ----------
+export async function shareDocs(rec, { title } = {}) {
+  const docx = await loadDocx();
+  const files = await buildDocxFiles(docx, rec);
+  if (!files.length) { toast('Niente da condividere.', 'info'); return null; }
+  const res = await shareOrDownload(files, { title: title || files[0].name.replace(/\.docx$/, ''), download: (blob, name) => downloadBlob(blob, name) });
+  if (res === 'downloaded') toast(files.length > 1 ? 'Documenti Word scaricati.' : 'Documento Word scaricato.', 'ok');
+  return res;
+}
+
+export function shareButton(rec, saver, { label = '↗ Condividi', cls = '.primary' } = {}) {
+  const btn = h('button.btn.share-btn' + cls, { type: 'button', on: { click: async () => {
+    saver && saver.flush();
+    btn.disabled = true;
+    try { await shareDocs(typeof rec === 'function' ? await rec() : rec); } catch (e) { toast('Non è stato possibile preparare il documento: ' + e.message, 'error', 6000); } finally { btn.disabled = false; }
+  } } }, label);
+  return btn;
+}
+
+// Menu a tendina semplice (details/summary): tiene nascoste le azioni secondarie
+export function moreMenu(items, { label = '⋯ Altro', ariaLabel = 'Altre azioni' } = {}) {
+  const menu = h('details.more-menu', h('summary.btn', { role: 'button', 'aria-label': ariaLabel, title: ariaLabel }, label), h('div.more-list', items.filter(Boolean)));
+  menu.addEventListener('click', (e) => { if (e.target.closest('.more-list button, .more-list a')) menu.open = false; });
+  document.addEventListener('click', (e) => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
+  return menu;
+}
+
 export function docActions(rec, saver) {
-  const driveBtn = h('button.btn', { type: 'button', on: { click: async () => {
-    saver.flush();
-    if (!sync.state.configured) { toast('Google Drive non è configurato: vai in Impostazioni. I dati sono comunque salvati sul dispositivo.', 'info', 5000); return; }
-    if (!sync.state.folder) { location.hash = '#/impostazioni'; toast('Scegli prima la cartella Drive.', 'info'); return; }
-    driveBtn.disabled = true;
-    try {
-      const sum = await sync.syncRecordNow(rec.kind, rec.id);
-      if (sum && sum.errors) toast('Errore nell\'invio a Drive: controlla lo stato nelle Impostazioni.', 'error', 6000);
-      else if (sum && sum.skipped === 'offline') toast('Sei offline: la scheda partirà al ritorno della rete.', 'info');
-      else toast('Scheda inviata a Drive.', 'ok');
-    } catch (e) { toast(e.message, 'error', 6000); } finally { driveBtn.disabled = false; }
-  } } }, '☁ Salva su Drive ora');
   const wordBtn = h('button.btn', { type: 'button', on: { click: async () => {
     saver.flush();
-    wordBtn.disabled = true;
     try {
-      const docx = await loadDocx();
-      const files = await buildDocxFiles(docx, rec);
+      const files = await buildDocxFiles(await loadDocx(), rec);
       for (const f of files) downloadBlob(f.data instanceof Blob ? f.data : new Blob([f.data]), f.name);
-    } catch (e) { toast('Errore nella creazione del documento: ' + e.message, 'error', 6000); } finally { wordBtn.disabled = false; }
+    } catch (e) { toast('Non è stato possibile creare il documento: ' + e.message, 'error', 6000); }
   } } }, '⬇ Scarica Word');
   const printBtn = h('button.btn', { type: 'button', on: { click: () => { saver.flush(); window.print(); } } }, '🖶 Stampa');
-  return [driveBtn, wordBtn, printBtn];
+  const driveBtn = sync.state.configured && sync.state.folder ? h('button.btn', { type: 'button', on: { click: async () => {
+    saver.flush();
+    try {
+      const sum = await sync.syncRecordNow(rec.kind, rec.id);
+      if (sum && sum.errors) toast('Non salvato su Drive: riprovo da solo tra poco.', 'error', 6000);
+      else if (sum && sum.skipped === 'offline') toast('Senza rete: si salva su Drive quando torna la connessione.', 'info');
+      else toast('Salvato su Drive ✓', 'ok');
+    } catch (e) { toast(sync.friendlyError(e), 'error', 6000); }
+  } } }, '☁ Salva su Drive adesso') : null;
+  return [shareButton(rec, saver), moreMenu([wordBtn, printBtn, driveBtn])];
+}
+
+// Pulsante "Fine" in fondo alla scheda: salva subito e torna all'elenco. È un gesto dell'utente, quindi se
+// l'accesso a Drive è scaduto e c'è qualcosa da salvare lo rinnova qui (finestra Google che si chiude da sola).
+export function finishButton(saver, { label = '✓ Fine', back = '#/' } = {}) {
+  const btn = h('button.btn.primary.big.finish-btn', { type: 'button', on: { click: () => {
+    // Tutto sincrono fino alla richiesta di accesso: su iPhone la finestra di Google si apre solo dentro il tocco
+    const hadChanges = saver.isDirty();
+    saver.flush();
+    const st = sync.state;
+    const needToken = st.configured && st.folder && navigator.onLine && !sync.hasToken() && (hadChanges || sync.pendingCount() > 0);
+    if (needToken && !sync.googleReady()) { sync.preloadGoogle(); toast('Un attimo… tocca di nuovo per salvare anche su Drive.', 'info'); return; }
+    const p = needToken ? sync.syncNow() : null;
+    btn.disabled = true;
+    location.hash = back;
+    if (p) p.then(() => toast('Salvato su Drive ✓', 'ok'), (e) => toast('Salvato sul telefono. ' + sync.friendlyError(e), 'info', 5000));
+    else { if (st.configured && st.folder) sync.runNow(); toast(st.configured && st.folder && navigator.onLine ? 'Salvato ✓' : 'Salvato sul telefono ✓', 'ok'); }
+  } } }, label);
+  return h('div.finish-row', btn);
 }
 
 // ---------- disegno (Tactic Board) in una cella ----------

@@ -1,5 +1,10 @@
-// E2E a più dispositivi con un Google Drive finto condiviso (Playwright + Chrome).
-// D1 e D2 modificano libreria esercizi e rosa (aggiunte concorrenti + una cancellazione); D3 ripristina.
+// E2E con Google Drive finto condiviso tra più "telefoni" (Playwright + Chrome).
+// - D1: primo avvio, "Collega Google Drive" in un tocco (login Google finto) → cartella "Rugby Coach" creata nella radice;
+//       scheda salvata su Drive e aggiornata senza duplicati; accesso scaduto → invito "Tocca per salvare su Drive"
+//       e rinnovo anche toccando "Fine allenamento" (prompt '').
+// - D2: nuovo telefono, un tocco → la cartella viene RITROVATA e le schede recuperate da sole; libreria/rosa
+//       modificate da D1 e D2 (aggiunte concorrenti + una cancellazione) restano unite.
+// - D3: terzo telefono recupera tutto. Nessun file o cartella duplicati.
 // Uso: node tests/e2e-multidevice.mjs
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -12,11 +17,12 @@ const SHOTS = path.join(ROOT, 'out', 'screens');
 fs.mkdirSync(SHOTS, { recursive: true });
 const PORT = Number(process.env.PORT || 8098);
 const BASE = `http://localhost:${PORT}/`;
-const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromium'].find((p) => fs.existsSync(p));
+const CHROME = process.env.CHROME || ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => fs.existsSync(p));
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: path.join(ROOT, 'app'), stdio: 'ignore' });
 await new Promise((r) => setTimeout(r, 800));
 
 // ---------- Drive finto condiviso ----------
+const FOLDER = 'application/vnd.google-apps.folder';
 const drive = { files: new Map(), n: 0, calls: [] };
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
 const partsOf = (buf) => {
@@ -29,16 +35,24 @@ async function driveRoute(route) {
   const u = new URL(req.url());
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
   const json = (obj, status = 200) => route.fulfill({ status, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(obj) });
-  drive.calls.push(req.method() + ' ' + u.pathname);
-  if (u.pathname === '/drive/v3/about') return json({ user: { emailAddress: 'coach@example.com' } });
-  if (u.pathname === '/drive/v3/files' && req.method() === 'POST') { drive.files.set('folder1', { id: 'folder1', ...JSON.parse(req.postData()) }); return json({ id: 'folder1', name: 'Rugby Coach' }); }
+  drive.calls.push(req.method() + ' ' + u.pathname + (u.searchParams.get('q') ? ' ' + u.searchParams.get('q') : ''));
+  if (!/^Bearer tok/.test(req.headers().authorization || '')) return json({ error: { message: 'Invalid Credentials' } }, 401);
+  if (u.pathname !== '/drive/v3/about') assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
+  if (u.pathname === '/drive/v3/about') return json({ user: { emailAddress: 'allenatore@example.com' } });
+  if (u.pathname === '/drive/v3/files' && req.method() === 'POST') {
+    const meta = JSON.parse(req.postData());
+    const id = 'fold' + (++drive.n);
+    drive.files.set(id, { ...meta, id, createdTime: new Date(1.7e12 + drive.n * 1000).toISOString() });
+    return json({ id, name: meta.name });
+  }
   if (u.pathname === '/drive/v3/files' && req.method() === 'GET') {
     const q = u.searchParams.get('q') || '';
     const parent = /'([^']+)' in parents/.exec(q)?.[1];
+    const mime = /mimeType='([^']+)'/.exec(q)?.[1];
     const props = [...q.matchAll(/appProperties has \{ key='(\w+)' and value='([^']*)' \}/g)];
     const list = [...drive.files.values()].filter((f) => f.appProperties && (!parent || (f.parents || []).includes(parent))
-      && props.every(([, k, v]) => f.appProperties[k] === v) && (!/mimeType='application\/json'/.test(q) || f.mimeType === 'application/json'));
-    return json({ files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, version: String(f.version), parents: f.parents, appProperties: f.appProperties })) });
+      && props.every(([, k, v]) => f.appProperties[k] === v) && (!mime || f.mimeType === mime));
+    return json({ files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdTime: f.createdTime, version: String(f.version || 1), parents: f.parents, appProperties: f.appProperties })) });
   }
   const media = /^\/drive\/v3\/files\/([^/]+)$/.exec(u.pathname);
   if (media && u.searchParams.get('alt') === 'media') return route.fulfill({ status: 200, headers: cors, body: drive.files.get(media[1])?.content ?? '' });
@@ -58,29 +72,35 @@ async function driveRoute(route) {
   }
   return json({ error: { message: 'non simulato ' + u.pathname } }, 404);
 }
+const folders = () => [...drive.files.values()].filter((f) => f.mimeType === FOLDER);
+const appFiles = () => [...drive.files.values()].filter((f) => f.mimeType !== FOLDER);
 const collection = (rcKind) => {
-  const f = [...drive.files.values()].filter((x) => x.appProperties?.rcKind === rcKind && x.appProperties?.rcId === 'all' && x.mimeType === 'application/json');
+  const f = appFiles().filter((x) => x.appProperties?.rcKind === rcKind && x.appProperties?.rcId === 'all' && x.mimeType === 'application/json');
   assert.equal(f.length, 1, 'un solo file ' + rcKind);
   const obj = JSON.parse(f[0].content);
   return { names: obj.data[rcKind === 'exercise' ? 'exercises' : 'players'].map((x) => x.name), tombs: obj.tombstones };
 };
+const sessionJson = (id) => appFiles().find((f) => f.appProperties?.rcId === id && f.appProperties?.rcVariant === 'json');
 
-// ---------- dispositivi ----------
-const CONFIG = `export default { clientId: '999-test.apps.googleusercontent.com', apiKey: 'AIzaTEST', appId: '123456789012' };`;
+// Google Identity Services finto: la "finestra" di Google risponde subito e registra il prompt usato
+const GIS_STUB = `
+window.google = window.google || {};
+window.__gis = { requests: [] };
+google.accounts = { oauth2: {
+  initTokenClient(cfg) { return { requestAccessToken(o) { __gis.requests.push((o && o.prompt) ?? null);
+    setTimeout(() => cfg.callback({ access_token: 'tok-' + __gis.requests.length, expires_in: 3599, scope: cfg.scope }), 30); } }; },
+  hasGrantedAllScopes(resp, s) { return (resp.scope || '').split(' ').includes(s); },
+  revoke(t, cb) { cb && cb(); },
+} };`;
+const CONFIG = `export default { clientId: '999-test.apps.googleusercontent.com' };`;
 const errors = [];
 const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
-async function device(name) {
-  const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 }, locale: 'it-IT' });
+async function device(name, { phone = false } = {}) {
+  const ctx = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1180, height: 820 }, hasTouch: phone, locale: 'it-IT' });
   await ctx.route(BASE + 'config.js', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: CONFIG }));
-  await ctx.route(/https:\/\/(accounts|apis)\.google\.com\//, (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* stub */' }));
+  await ctx.route('https://accounts.google.com/gsi/client', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB }));
+  await ctx.route('https://apis.google.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* stub */' }));
   await ctx.route('https://www.googleapis.com/**', driveRoute);
-  // token OAuth finto (il popup di Google non è simulabile qui); l'app lo sposta in sessionStorage
-  await ctx.addInitScript(() => {
-    if (!sessionStorage.getItem('e2e-init')) {
-      sessionStorage.setItem('e2e-init', '1');
-      localStorage.setItem('rc.google.token', JSON.stringify({ access_token: 'tok', expiresAt: Date.now() + 3600e3 }));
-    }
-  });
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error') errors.push(name + ': ' + m.text()); });
   page.on('pageerror', (e) => errors.push(name + ' pageerror: ' + e.message));
@@ -89,10 +109,22 @@ async function device(name) {
 }
 const ready = (p) => p.waitForFunction(() => window.__rcReady === true, null, { timeout: 20000 });
 const settle = (p, ms = 900) => p.waitForTimeout(ms);
-async function connect(p) {
+const shot = (p, name) => p.screenshot({ path: path.join(SHOTS, name + '.png') });
+const gisPrompts = (p) => p.evaluate(() => (window.__gis ? window.__gis.requests : []));
+
+// Un tocco: "Collega Google Drive" nella prima schermata
+async function connectOneTap(p, label) {
   await p.goto(BASE); await ready(p);
-  await p.getByRole('button', { name: '＋ Crea cartella dedicata' }).click(); // il finto Drive restituisce sempre folder1
+  await p.getByRole('heading', { name: 'Salva le tue schede su Google Drive' }).waitFor();
+  if (label) await shot(p, label + '-1-benvenuto');
+  await p.getByRole('button', { name: 'Collega Google Drive' }).click();
+  await p.getByRole('heading', { name: 'Fatto!' }).waitFor({ timeout: 20000 });
+  await p.getByText('Le schede si salvano in Drive › Rugby Coach').waitFor();
+  if (label) await shot(p, label + '-2-fatto');
+  const text = await p.locator('.onb-hero').innerText();
+  await p.getByRole('button', { name: 'Inizia' }).click();
   await p.waitForURL(/#\/$/);
+  return text;
 }
 async function addExercise(p, name) {
   await p.goto(BASE + '#/libreria'); await ready(p);
@@ -107,36 +139,103 @@ async function addPlayer(p, name) {
   await p.getByRole('button', { name: '+ Aggiungi' }).click();
   await p.waitForFunction((n) => [...document.querySelectorAll('.player-row input')].some((i) => i.value === n), name);
 }
-async function syncNow(p) {
-  await p.goto(BASE + '#/impostazioni'); await ready(p);
-  await p.getByRole('button', { name: '☁ Sincronizza ora' }).click();
-  await p.waitForFunction(() => document.querySelector('.queue li') && !document.querySelector('.queue .status-pill.pending, .queue .status-pill.syncing, .queue .status-pill.error'), null, { timeout: 25000 });
-  await settle(p, 500);
-}
-async function restore(p) {
-  await p.goto(BASE + '#/impostazioni'); await ready(p);
-  await p.getByRole('button', { name: '⇩ Ripristina dai backup .json su Drive' }).click();
-  await p.getByText(/Ripristino:/).waitFor({ timeout: 20000 });
-  await settle(p, 1500);
+// Impostazioni: "Salva su Drive adesso" se c'è qualcosa da salvare, finché compare "Tutto salvato su Drive ✓"
+async function saveAll(p) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 30000) {
+    await p.goto(BASE + '#/impostazioni'); await ready(p); await settle(p, 400);
+    if (await p.getByText('Tutto salvato su Drive ✓').count()) return;
+    const b = p.getByRole('button', { name: '☁ Salva su Drive adesso' });
+    if (await b.count()) await b.click();
+    await settle(p, 1500);
+  }
+  throw new Error('le schede non risultano salvate su Drive');
 }
 const localNames = (p, store) => p.evaluate((st) => new Promise((res) => { const r = indexedDB.open('rugby-coach'); r.onsuccess = () => { const g = r.result.transaction(st).objectStore(st).getAll(); g.onsuccess = () => res(g.result.map((x) => x.name)); }; }), store);
+const expireToken = (p) => p.evaluate(() => localStorage.setItem('rc.google.token', JSON.stringify({ access_token: 'tok-scaduto', expiresAt: Date.now() - 1000 })));
 
 let ok = false;
 try {
-  console.log('• D1: collega Drive, aggiunge esercizio e giocatore');
-  const d1 = await device('D1');
-  await connect(d1);
+  console.log('• D1 (telefono): primo avvio, collegamento a Drive in un tocco → cartella creata nella radice');
+  const d1 = await device('D1', { phone: true });
+  await connectOneTap(d1, '30-telefono-onboarding');
+  assert.deepEqual(await gisPrompts(d1), ['consent'], 'consenso solo al primo accesso');
+  assert.equal(folders().length, 1);
+  const folder = folders()[0];
+  assert.equal(folder.name, 'Rugby Coach');
+  assert.ok(!folder.parents, 'creata nella radice del Drive');
+  assert.deepEqual(folder.appProperties, { rcApp: 'rugby-coach', rcKind: 'folder' });
+  await d1.getByRole('button', { name: 'Drive ✓' }).waitFor({ timeout: 20000 });
+  await shot(d1, '31-telefono-home-collegato');
+
+  console.log('• D1: nuova scheda salvata da sola su Drive, poi aggiornata senza duplicati');
+  await d1.getByRole('button', { name: '+ Nuovo allenamento' }).click();
+  await d1.waitForURL(/seduta\/([^/]+)\/foglio/);
+  const sid = /seduta\/([^/]+)\//.exec(d1.url())[1];
+  const sessionUrl = d1.url();
+  await d1.getByLabel('Data allenamento').fill('2026-11-24');
+  await d1.locator('.cats .choice-btn', { hasText: /^U8$/ }).click();
+  await d1.getByLabel('Nome esercizio 1').fill('Fulmine');
+  await d1.locator('.page-actions .status-pill', { hasText: 'Salvato su Drive ✓' }).waitFor({ timeout: 25000 });
+  const sj = sessionJson(sid);
+  assert.ok(sj && sj.parents[0] === folder.id, 'file nella cartella Rugby Coach');
+  const nFiles = appFiles().length;
+  await d1.getByLabel('Nome esercizio 2').fill('Palla quadrata');
+  await d1.locator('.page-actions .status-pill', { hasText: 'Da salvare su Drive' }).waitFor({ timeout: 5000 });
+  await d1.locator('.page-actions .status-pill', { hasText: 'Salvato su Drive ✓' }).waitFor({ timeout: 25000 });
+  assert.equal(appFiles().length, nFiles, 'aggiornati gli stessi file');
+  assert.equal(JSON.parse(sessionJson(sid).content).record.planItems[1].name, 'Palla quadrata');
+  await shot(d1, '32-telefono-scheda-salvata');
+
+  console.log('• D1: accesso scaduto → UN invito "Tocca per salvare su Drive" (prompt vuoto, nessuna schermata di consenso)');
+  await expireToken(d1);
+  await d1.reload(); await ready(d1);
+  await d1.getByLabel('Nome esercizio 3').fill('Mastino');
+  const invite = d1.getByRole('button', { name: 'Tocca per salvare su Drive' });
+  await invite.waitFor({ timeout: 20000 });
+  assert.equal(await d1.locator('.drive-invite:not([hidden])').count(), 1, 'un solo invito');
+  assert.equal(await d1.locator('dialog[open]').count(), 0, 'non bloccante');
+  await shot(d1, '33-telefono-invito-salva-su-drive');
+  await invite.click();
+  await d1.locator('.page-actions .status-pill', { hasText: 'Salvato su Drive ✓' }).waitFor({ timeout: 25000 });
+  assert.equal((await gisPrompts(d1)).at(-1), '', 'rinnovo con prompt vuoto');
+  assert.equal(JSON.parse(sessionJson(sid).content).record.planItems[2].name, 'Mastino');
+  await invite.waitFor({ state: 'hidden' });
+
+  console.log('• D1: accesso scaduto di nuovo → rinnovo toccando "Fine allenamento"');
+  await expireToken(d1);
+  await d1.goto(sessionUrl); await d1.reload(); await ready(d1);
+  await d1.getByLabel('Nome esercizio 4').fill('Partita');
+  await settle(d1, 700);
+  await d1.getByRole('button', { name: '✓ Fine allenamento' }).click();
+  await d1.waitForURL(/#\/$/);
+  await d1.waitForFunction(() => window.__gis && window.__gis.requests.length >= 1, null, { timeout: 10000 });
+  assert.equal((await gisPrompts(d1)).at(-1), '');
+  const t0 = Date.now();
+  while (JSON.parse(sessionJson(sid).content).record.planItems[3].name !== 'Partita' && Date.now() - t0 < 20000) await settle(d1, 500);
+  assert.equal(JSON.parse(sessionJson(sid).content).record.planItems[3].name, 'Partita', 'salvato dopo "Fine allenamento"');
+
+  console.log('• D1: libreria e rosa');
   await addExercise(d1, 'Esercizio D1');
   await addPlayer(d1, 'Giocatore D1');
-  await syncNow(d1);
+  await saveAll(d1);
   assert.ok(collection('exercise').names.includes('Esercizio D1'));
   assert.deepEqual(collection('player').names, ['Giocatore D1']);
 
-  console.log('• D2: nuovo dispositivo, ripristina, aggiunge e CANCELLA un esempio');
+  console.log('• D2: nuovo telefono, un tocco → cartella RITROVATA e schede recuperate da sole');
   const d2 = await device('D2');
-  await connect(d2);
-  await restore(d2);
-  assert.ok((await localNames(d2, 'exercises')).includes('Esercizio D1'), 'D2 ha la libreria di D1');
+  const doneText = await connectOneTap(d2);
+  assert.equal(folders().length, 1, 'nessuna seconda cartella');
+  assert.match(doneText, /Abbiamo recuperato \d+ sched/);
+  await d2.goto(BASE + '#/'); await ready(d2);
+  await d2.locator('.rec-card', { hasText: '24/11/2026' }).waitFor();
+  assert.ok((await localNames(d2, 'exercises')).includes('Esercizio D1'), 'libreria recuperata');
+  assert.ok((await localNames(d2, 'players')).includes('Giocatore D1'), 'rosa recuperata');
+  const nAfterD2 = appFiles().length;
+  await settle(d2, 5000);
+  assert.equal(appFiles().length, nAfterD2, 'il collegamento del nuovo telefono non duplica nulla');
+
+  console.log('• D2: aggiunge e CANCELLA un esempio; D1 aggiunge ancora: niente si perde');
   await addExercise(d2, 'Esercizio D2');
   await addPlayer(d2, 'Giocatore D2');
   await d2.goto(BASE + '#/libreria'); await ready(d2);
@@ -144,36 +243,32 @@ try {
   await d2.getByRole('button', { name: 'Elimina', exact: true }).click();
   await d2.locator('dialog.modal').getByRole('button', { name: 'Elimina' }).click();
   await d2.waitForURL(/#\/libreria$/);
-  await syncNow(d2);
+  await saveAll(d2);
   let lib = collection('exercise');
   assert.ok(lib.names.includes('Esercizio D1') && lib.names.includes('Esercizio D2') && !lib.names.includes('Fulmine'), lib.names.join(', '));
-  assert.ok(lib.tombs.exercise['seed-ex-fulmine'], 'tombstone della cancellazione nel .json');
-
-  console.log('• D1 (non sa nulla di D2) aggiunge ancora e sincronizza: niente si perde');
+  assert.ok(lib.tombs.exercise['seed-ex-fulmine']);
   await addExercise(d1, 'Esercizio D1-bis');
   await addPlayer(d1, 'Giocatore D1-bis');
-  await syncNow(d1);
+  await saveAll(d1);
   lib = collection('exercise');
-  for (const n of ['Esercizio D1', 'Esercizio D2', 'Esercizio D1-bis']) assert.ok(lib.names.includes(n), 'su Drive manca ' + n + ': ' + lib.names.join(', '));
-  assert.ok(!lib.names.includes('Fulmine'), 'la cancellazione di D2 non è stata annullata da D1');
+  for (const n of ['Esercizio D1', 'Esercizio D2', 'Esercizio D1-bis']) assert.ok(lib.names.includes(n), 'su Drive manca ' + n);
+  assert.ok(!lib.names.includes('Fulmine'), 'la cancellazione di D2 resta');
   assert.deepEqual(collection('player').names.sort(), ['Giocatore D1', 'Giocatore D1-bis', 'Giocatore D2']);
   const d1ex = await localNames(d1, 'exercises');
-  assert.ok(d1ex.includes('Esercizio D2') && !d1ex.includes('Fulmine'), 'il merge è applicato anche in locale su D1');
-  const libDocx = [...drive.files.values()].filter((f) => f.appProperties?.rcVariant === 'docx-library');
-  assert.equal(libDocx.length, 1, 'un solo .docx della libreria');
-  assert.ok(libDocx[0].version >= 3, 'il .docx della libreria è rigenerato a ogni unione');
+  assert.ok(d1ex.includes('Esercizio D2') && !d1ex.includes('Fulmine'), 'unione applicata anche su D1');
 
-  console.log('• D3: terzo dispositivo, ripristina tutto');
-  const d3 = await device('D3');
-  await connect(d3);
-  await restore(d3);
+  console.log('• D3: terzo telefono recupera tutto');
+  const d3 = await device('D3', { phone: true });
+  await connectOneTap(d3);
   const ex3 = await localNames(d3, 'exercises');
   for (const n of ['Esercizio D1', 'Esercizio D2', 'Esercizio D1-bis']) assert.ok(ex3.includes(n), 'D3 non ha ' + n);
-  assert.ok(!ex3.includes('Fulmine'), 'D3 riceve anche la cancellazione');
+  assert.ok(!ex3.includes('Fulmine'));
   assert.deepEqual((await localNames(d3, 'players')).sort(), ['Giocatore D1', 'Giocatore D1-bis', 'Giocatore D2']);
-  await d3.goto(BASE + '#/libreria'); await ready(d3);
-  await d3.screenshot({ path: path.join(SHOTS, '22-terzo-dispositivo-libreria.png') });
-  const names = [...drive.files.values()].filter((f) => f.id !== 'folder1').map((f) => f.name);
+  await d3.goto(BASE + '#/impostazioni'); await ready(d3);
+  await shot(d3, '34-telefono-impostazioni-collegato');
+  await settle(d3, 4000);
+  assert.equal(folders().length, 1, 'una sola cartella');
+  const names = appFiles().map((f) => f.name);
   assert.equal(new Set(names).size, names.length, 'nessun duplicato su Drive: ' + names.join(' | '));
   ok = true;
 } finally {

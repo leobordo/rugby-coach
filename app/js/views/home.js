@@ -1,14 +1,16 @@
-// Home: archivio di sedute, partite e piani (R2) con stato di sincronizzazione per scheda.
+// Home: elenco di allenamenti, partite e piani (R2) con lo stato di salvataggio di ogni scheda.
+// Pensata per il telefono: un pulsante grande per creare, ricerca e filtri chiusi, azioni secondarie nel menu ⋯.
 import { h, clear, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { CATEGORIES, newSession, newMatch, newPlan, duplicateRecord, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
 import { banners } from './banners.js';
+import { moreMenu } from './common.js';
 
 const TABS = {
-  sedute: { kind: 'session', label: 'Sedute', newLabel: '+ Nuova seduta' },
+  sedute: { kind: 'session', label: 'Allenamenti', newLabel: '+ Nuovo allenamento' },
   partite: { kind: 'match', label: 'Partite', newLabel: '+ Nuova partita' },
-  piani: { kind: 'plan', label: 'Piani trimestrali', newLabel: '+ Nuovo piano' },
+  piani: { kind: 'plan', label: 'Piani', newLabel: '+ Nuovo piano' },
 };
 
 function recCats(r) {
@@ -42,9 +44,9 @@ export async function homeView(root, params, query) {
   const dateFilters = conf.kind === 'plan' ? null : h('span.date-range', h('span', 'dal'), from, h('span', 'al'), to);
   for (const el of [from, to]) el.addEventListener('change', () => { filters.from = from.value; filters.to = to.value; renderList(); });
   const listEl = h('div.rec-list');
-  root.append(h('div.list-toolbar',
-    h('button.btn.primary.big', { type: 'button', on: { click: create } }, conf.newLabel),
-    h('div.filters', catSel, dateFilters, sortSel, search)), listEl);
+  root.append(h('div.list-toolbar.home-toolbar',
+    h('button.btn.primary.big.new-btn', { type: 'button', on: { click: create } }, conf.newLabel),
+    h('details.filters-box', h('summary.btn', { role: 'button' }, '🔍 Cerca'), h('div.filters', search, catSel, dateFilters, sortSel))), listEl);
   for (const el of [catSel, sortSel]) el.addEventListener('change', () => { filters.cat = catSel.value; filters.sort = sortSel.value; renderList(); });
   search.addEventListener('input', () => { filters.q = search.value.trim().toLowerCase(); renderList(); });
 
@@ -72,8 +74,8 @@ export async function homeView(root, params, query) {
     });
     clear(listEl);
     if (!items.length) {
-      listEl.append(h('div.empty-state', h('p', all.length ? 'Nessun risultato con questi filtri.' : `Ancora nessuna ${conf.kind === 'plan' ? 'programmazione' : conf.kind === 'match' ? 'partita' : 'seduta'}.`),
-        h('button.btn.primary', { type: 'button', on: { click: create } }, conf.newLabel)));
+      listEl.append(h('div.empty-state', h('p', all.length ? 'Nessun risultato con questi filtri.' : `Ancora nessun${conf.kind === 'match' ? 'a partita' : conf.kind === 'plan' ? ' piano' : ' allenamento'}.`),
+        all.length ? null : h('p.hint', `Tocca "${conf.newLabel}" per iniziare.`)));
       return;
     }
     for (const r of items) {
@@ -95,14 +97,15 @@ export async function homeView(root, params, query) {
           h('strong.rec-title', title),
           h('span.rec-meta', meta || ' '),
           h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
-        h('div.rec-actions',
-          r.kind === 'session' ? h('a.btn.small', { href: `#/seduta/${r.id}/osservazione` }, 'Osservazione') : null,
-          h('button.btn.small', { type: 'button', on: { click: async () => { const d = duplicateRecord(r); if (d.kind === 'session' || d.kind === 'match') d.date = r.date; await repo.save(d); toast('Duplicato.', 'ok'); renderList(); } } }, 'Duplica'),
-          h('button.btn.small.danger', { type: 'button', on: { click: async () => {
-            const msg = sync.state.folder ? 'Eliminare questa scheda dal dispositivo? I file già salvati su Drive non vengono cancellati.' : 'Eliminare definitivamente questa scheda?';
+        moreMenu([
+          r.kind === 'session' ? h('a.btn', { href: `#/seduta/${r.id}/osservazione` }, '👁 Scheda di osservazione') : null,
+          h('button.btn', { type: 'button', on: { click: async () => { const d = duplicateRecord(r); if (d.kind === 'session' || d.kind === 'match') d.date = r.date; await repo.save(d); toast('Copia creata.', 'ok'); renderList(); } } }, '⧉ Duplica'),
+          h('button.btn.danger', { type: 'button', on: { click: async () => {
+            const msg = sync.state.folder ? 'Eliminare questa scheda dal telefono? Il documento già salvato su Drive resta.' : 'Eliminare definitivamente questa scheda?';
             if (!(await confirmDialog(msg, { okText: 'Elimina', danger: true }))) return;
-            await repo.remove(r.kind, r.id); toast('Eliminato.', 'ok'); renderList();
-          } } }, 'Elimina'))));
+            await repo.remove(r.kind, r.id); toast('Eliminata.', 'ok'); renderList();
+          } } }, '🗑 Elimina'),
+        ], { label: '⋯' })));
     }
   }
   await renderList();

@@ -1,87 +1,71 @@
-# Rugby Coach — schede per allenatori di minirugby
+# Come si usa Rugby Coach
 
-Web app installabile (PWA) che riproduce le 4 schede cartacee:
+Rugby Coach ti permette di compilare dal telefono le schede di allenamento e partita, disegnare gli esercizi e
+tenere una copia di tutto nel tuo Google Drive. Funziona anche **senza rete**, a bordo campo.
 
-- **Foglio allenamento**: programma della seduta (esercizio e durata, materiale e spazio, obiettivi, parole chiave, cosa osservo, durata totale) + bilancio (complessivamente / individualmente), **errori e cause** (Sì/No + nota), autovalutazione dell'osservazione, preparatore atletico;
-- **Scheda di allenamento** (osservazione): presenti per categoria U6…U16 con totale, esercizio / obiettivo / positivo / negativo / miglioramenti;
-- **Scheda della partita**: contatori +/− a tap grandi per 7 indicatori + 1 colonna con intestazione libera, righe con etichetta libera, totali, note, n. giocatori;
-- **Obiettivi / piano trimestrale**: obiettivi educativi e didattici, allenamenti composti da blocchi; da ogni allenamento si crea un foglio precompilato.
+## Mettere l'app sul telefono
 
-In più: **Libreria esercizi** con **Tactic Board** (campo intero / metà campo / griglia, pedine di due squadre, palla, coni, paletti, scudi, frecce di corsa, passaggio e calcio, mano libera, testo, annulla/ripeti), **Rosa** per categoria, **Impostazioni** con Google Drive, export/import.
+Così si apre con un tocco come le altre app e funziona anche senza Internet.
 
-Funziona **offline** a bordo campo. I dati restano sul dispositivo (IndexedDB) e, se lo colleghi, vengono salvati sul **tuo Google Drive** come documenti **Word (.docx)** fedeli agli originali + un **.json** di backup per scheda (sincronizzazione monodirezionale app → Drive).
+**Android (Chrome)**
 
-Senza configurazione Google l'app funziona in **modalità solo locale** (e lo dice). Per collegare Drive segui la [guida passo passo](GUIDA_GOOGLE_CLOUD.md) (nell'app: **Impostazioni → Guida Google Drive**, disponibile anche offline).
+1. Apri l'app in Chrome.
+2. Tocca **Installa** nel riquadro in alto, oppure il menu **⋮** in alto a destra → **Installa app**
+   (o **Aggiungi a schermata Home**).
+3. Trovi l'icona **Rugby Coach** tra le app.
 
-Su Drive vanno: un .docx + un .json per ogni seduta, partita e piano; *Rugby Coach - Libreria esercizi* (.docx con i disegni + .json) e *Rugby Coach - Rosa giocatori.json*. I file portano etichette nascoste (appProperties) con il codice della scheda: ricollegando la stessa cartella, cambiando account o ripristinando su un altro dispositivo l'app ritrova e aggiorna i suoi file invece di duplicarli.
+**iPhone e iPad (Safari)**
 
-Libreria e rosa si possono modificare da più dispositivi: prima di ogni invio l'app scarica il backup su Drive e unisce elemento per elemento (vince la modifica più recente; le cancellazioni viaggiano come "tombstone" e si propagano). Se nel frattempo un altro dispositivo aggiorna il file (controllo della `version` del file su Drive) l'unione si ripete; resta una piccola finestra tra controllo e invio, perché Drive non offre aggiornamenti condizionati: un elemento eventualmente perso torna al giro successivo del dispositivo che lo possiede.
+1. Apri l'app in **Safari**.
+2. Tocca **Condividi** (il quadrato con la freccia **⬆**, in basso).
+3. Scorri e tocca **Aggiungi alla schermata Home** → **Aggiungi**.
 
-## Avvio sul computer
+## Collegare Google Drive
 
-Serve un server statico qualsiasi (i moduli ES non si aprono con doppio clic su `index.html`):
+1. Tocca **Collega Google Drive** (alla prima apertura o in **Impostazioni**).
+2. Scegli il tuo account Google e tocca **Continua** / **Consenti**.
+3. Fatto! Le schede si salvano da sole in **Drive › Rugby Coach**, come documenti Word.
 
-```bash
-cd app
-python3 -m http.server 8080
-```
+L'app vede solo i file che crea lei: il resto del tuo Drive resta privato. Per questo usa una sua cartella
+**Rugby Coach**: se ne avevi già creata una a mano con lo stesso nome, ne vedrai due. Quella giusta è quella creata
+dall'app; la vecchia puoi rinominarla o spostarla.
 
-Poi apri <http://localhost:8080>. (In alternativa: `npx serve -l 8080` o qualsiasi altro server statico.)
-Il service worker e Google login funzionano su `http://localhost` e su qualsiasi indirizzo `https://`.
+Accanto a ogni scheda vedi a che punto è:
 
-## Pubblicazione
+- **Salvato sul telefono** – la scheda è al sicuro sul telefono;
+- **Da salvare su Drive** – verrà copiata su Drive appena possibile;
+- **Salvato su Drive ✓** – c'è anche la copia su Drive.
 
-L'app è pubblicata su GitHub Pages: <https://leobordo.github.io/rugby-coach/>. Codice e istruzioni per sviluppatori: <https://github.com/leobordo/rugby-coach>.
+Se compare il pulsante giallo **Tocca per salvare su Drive**, toccalo: si apre un attimo la finestra di Google e
+le schede vengono salvate. Succede quando l'app è rimasta chiusa per un po'. Anche **✓ Fine allenamento** salva tutto.
 
-Ogni modifica al branch `main` viene verificata (`npm test`) e pubblicata in automatico dalla GitHub Action `.github/workflows/pages.yml`, che pubblica il contenuto di questa cartella `app/`. Funziona allo stesso modo su qualsiasi hosting statico HTTPS (Netlify, Cloudflare Pages, Firebase Hosting…): tutti i percorsi sono relativi e il router usa `#/…`.
+## Condividere una scheda
 
-Dopo la pubblicazione aggiungi l'indirizzo dell'app tra le **Origini JavaScript autorizzate** del Client ID e tra i siti della API key (vedi la guida). Facoltativo: compila `config.js` (copiando `config.example.js`) così i colleghi non devono inserire i valori a mano.
+1. Apri la scheda (allenamento, partita o piano) oppure la **Libreria**.
+2. Tocca **↗ Condividi**.
+3. Scegli WhatsApp, Mail, Drive o File: parte un documento Word, uguale alla scheda di carta.
 
-**Aggiornamenti**: quando pubblichi una nuova versione, aumenta `VERSION` in `sw.js` (e aggiungi a `PRECACHE` eventuali file nuovi: `npm test` lo controlla); l'app mostrerà "È disponibile una nuova versione — Aggiorna".
+Funziona anche senza Google Drive collegato. Se il telefono non permette di condividere, il documento viene scaricato.
 
-## Installazione sul dispositivo
+## Se cambio telefono
 
-- **Android / Chrome**: pulsante "Installa app" in home, oppure menu ⋮ → *Installa app / Aggiungi a schermata Home*.
-- **iPhone / iPad (Safari)**: Condividi ⬆ → *Aggiungi alla schermata Home*. Consigliato: Safari può cancellare i dati dei siti non installati e non usati per settimane.
+1. Metti l'app sul nuovo telefono (vedi sopra).
+2. Tocca **Collega Google Drive** con **lo stesso account** di prima.
+3. L'app ritrova la cartella **Rugby Coach** e recupera da sola schede, libreria esercizi e rosa.
 
-L'app chiede al browser l'archiviazione persistente (`navigator.storage.persist()`); lo stato è visibile in Impostazioni. Fai comunque ogni tanto **Esporta tutto (JSON)** o collega Drive.
+Nessun doppione: i documenti su Drive vengono aggiornati, non copiati.
 
-## Struttura
+## Domande frequenti
 
-```
-app/
-  index.html, manifest.webmanifest, sw.js, config.js, config.example.js
-  css/app.css
-  icons/                     icone PWA (SVG + PNG generate)
-  vendor/docx.mjs            libreria "docx" 9.x (MIT) vendorizzata, nessun CDN
-  js/
-    main.js                  avvio, router (#/...), service worker
-    model.js                 modello dati, testi fissi, campi calcolati, migrazioni, backup
-    seed.js                  dati di esempio (piano I° trimestre + 16 giochi)
-    db.js, repo.js           IndexedDB e accesso ai dati
-    docx-build.js            documenti Word fedeli agli originali
-    artifacts.js             file da inviare a Drive (.docx + .json)
-    drive.js                 Drive REST v3 via fetch (iniettabile, testabile)
-    sync.js                  coda di sincronizzazione persistente (outbox)
-    google.js                Google Identity Services (token) + Google Picker
-    app-sync.js              collega coda, Drive, login e UI
-    ui.js                    componenti (Sì/No, scelte, contatori, tag, liste)
-    markdown.js              mostra guida e README come pagine dell'app (#/guida, #/info)
-    board/                   Tactic Board: model.js, render.js (SVG), editor.js
-    views/                   pagine: home, session, match, plan, library, roster, settings
-```
+**Posso usarla senza Internet?** Sì. Le schede si salvano sul telefono e vanno su Drive quando torna la rete.
 
-## Test (sviluppo)
+**Se modifico il documento Word su Drive, cambia anche nell'app?** No: l'app copia le schede su Drive, non il contrario.
+Se poi modifichi la stessa scheda nell'app, il documento su Drive viene aggiornato.
 
-Dalla radice del repository, dopo `npm install`:
+**I nomi dei bambini dove finiscono?** Solo sul tuo telefono e nel tuo Google Drive. Nessun altro li riceve.
 
-```bash
-npm test          # node --test: modello, migrazioni, Tactic Board, .docx (+ conversione LibreOffice), Drive e coda con fetch finto, PWA
-npm run e2e       # browser headless (Playwright + Chrome): tutte le pagine, persistenza, Tactic Board, offline, Drive simulato; più dispositivi che modificano libreria e rosa + un terzo che ripristina
-```
+**Ho cancellato i dati del browser.** Collega di nuovo Google Drive con lo stesso account: le schede tornano.
 
-Le dipendenze di sviluppo (playwright-core, docx) servono solo ai test e a `npm run vendor`, non a runtime.
+---
 
-## Privacy
-
-Nessun dato dei bambini va a server di terzi: i dati stanno sul dispositivo e, se colleghi Drive, solo nel Drive di chi usa l'app. Gli unici script esterni sono quelli di Google (login e Picker), caricati solo quando si usa Drive.
+[Informativa sulla privacy](privacy.html)

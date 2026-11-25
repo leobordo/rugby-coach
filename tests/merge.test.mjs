@@ -1,7 +1,7 @@
 // Merge di libreria esercizi e rosa tra dispositivi: per elemento, vince il più recente, tombstone per le cancellazioni.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeCollection, mergeTombstones } from '../app/js/model.js';
+import { mergeCollection, mergeTombstones, migrateRecord, EPOCH } from '../app/js/model.js';
 
 const it = (id, name, t) => ({ id, kind: 'exercise', name, updatedAt: `2026-11-${String(t).padStart(2, '0')}T10:00:00.000Z` });
 const day = (t) => `2026-11-${String(t).padStart(2, '0')}T10:00:00.000Z`;
@@ -51,4 +51,26 @@ test('stesso contenuto: nessun cambiamento; tombstone unite con la data più rec
   assert.equal(r.remoteChanged, false);
   assert.equal(r.upserts.length + r.deletes.length, 0);
   assert.deepEqual(mergeTombstones({ q: day(1) }, { q: day(4), w: day(2) }), { q: day(4), w: day(2) });
+});
+
+test('updatedAt mancante = 0: non prevale mai su una modifica reale (anche dopo migrateRecord dei dati remoti)', () => {
+  const noDate = { id: 'a', kind: 'exercise', name: 'senza data' };
+  const m = migrateRecord(noDate);
+  assert.equal(m.updatedAt, EPOCH, 'migrateRecord non inventa la data di oggi');
+  assert.equal(migrateRecord({ ...noDate, updatedAt: 'boh' }).updatedAt, EPOCH);
+  assert.equal(migrateRecord({ ...noDate, updatedAt: day(4) }).updatedAt, day(4));
+  // remoto senza data contro locale datato: vince il locale
+  const r1 = mergeCollection({ local: [it('a', 'locale', 2)], remote: [m] });
+  assert.deepEqual(names(r1), ['locale']);
+  assert.equal(r1.upserts.length, 0);
+  // locale senza data contro remoto datato: vince il remoto
+  const r2 = mergeCollection({ local: [noDate], remote: [it('a', 'remoto', 2)] });
+  assert.deepEqual(names(r2), ['remoto']);
+  // elemento senza data e tombstone: resta cancellato
+  const r3 = mergeCollection({ local: [], remote: [noDate], remoteTombs: { a: day(1) } });
+  assert.deepEqual(r3.items, []);
+  // entrambi senza data: nessun cambiamento inventato
+  const r4 = mergeCollection({ local: [noDate], remote: [{ ...noDate }] });
+  assert.equal(r4.upserts.length + r4.deletes.length, 0);
+  assert.equal(r4.remoteChanged, false);
 });

@@ -1,8 +1,8 @@
 // Collega: repository locale + coda di sync + client Drive + login Google. Espone lo stato alla UI.
 import * as repo from './repo.js';
 import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKeyOfRemote } from './sync.js';
-import { createDriveClient, DriveAuthError, DriveOfflineError } from './drive.js';
-import { createGoogleAuth } from './google.js';
+import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder } from './drive.js';
+import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
 import { SYNCABLE_KINDS, APP_ID } from './model.js';
 import { debounce } from './ui.js';
@@ -10,6 +10,7 @@ import { debounce } from './ui.js';
 export const DEFAULT_FOLDER_NAME = 'Rugby Coach';
 
 let fileConfig = {};
+const statusMap = new Map(); // stato di ogni scheda verso Drive, tenuto in memoria (lettura sincrona nei tocchi)
 let engine = null;
 let auth = null;
 let drive = null;
@@ -44,6 +45,7 @@ async function refreshState() {
   const cfg = await getConfig();
   const saved = await repo.getSetting('google', {}) || {};
   state.configured = !!cfg.clientId;
+  state.pickerAvailable = !!(cfg.clientId && cfg.apiKey && cfg.appId); // scelta cartella col Picker: solo opzione avanzata
   state.configSource = saved.clientId ? 'impostazioni' : fileConfig.clientId ? 'config.js' : null;
   state.folder = await repo.getSetting('drive', null);
   state.account = (state.folder && state.folder.account) || null;
@@ -62,16 +64,19 @@ export async function initSync() {
     buildArtifacts: buildFor,
     getFolderId: async () => (await repo.getSetting('drive', null))?.folderId || null,
     isOnline: () => navigator.onLine,
-    onChange: (e) => repo.emit('sync-entry', e),
+    onChange: (e) => { if (e.status) statusMap.set(e.key, e.status); else statusMap.delete(e.key); repo.emit('sync-entry', e); },
   });
+  for (const e of await syncStore.all()) statusMap.set(e.key, e.status);
   repo.setSyncHooks({
     onDirty: async (kind, id) => { await engine.markDirty(kind, id); schedule(); },
     onForget: (kind, id) => engine.forget(kind, id),
   });
   await refreshState();
-  window.addEventListener('online', () => { runNow(); if (state.configured) auth.preload(); });
+  window.addEventListener('online', () => { runNow(); if (state.configured && state.folder) auth.preload(); });
   setInterval(() => { if (navigator.onLine) runNow(); }, 60e3);
-  if (state.configured && navigator.onLine) setTimeout(() => auth.preload(), 1500);
+  // Drive collegato: lo script di accesso Google viene preparato subito (così il tocco "Salva su Drive" funziona
+  // anche su iPhone). Se non è collegato, si prepara solo quando l'app propone di collegarlo (preloadGoogle).
+  if (state.configured && state.folder && navigator.onLine) auth.preload();
   setTimeout(runNow, 2500);
 }
 
@@ -159,7 +164,7 @@ export async function runNow({ force = false } = {}) {
     const sum = await engine.processQueue({ force });
     state.needsAuth = !!sum.needsAuth;
     state.lastRun = { at: Date.now(), ...sum };
-    state.lastError = sum.folderMissing ? 'La cartella Drive non è più accessibile: sceglila di nuovo nelle Impostazioni.' : null;
+    state.lastError = sum.folderMissing ? 'La cartella "Rugby Coach" su Drive non si trova più: in Impostazioni tocca "Collega Google Drive" per ricrearla.' : null;
     return sum;
   } finally {
     state.running = false;
@@ -170,14 +175,30 @@ export async function runNow({ force = false } = {}) {
 
 // Da un gesto dell'utente: accede se serve e sincronizza tutto subito
 export async function syncNow() {
-  if (!state.configured) throw new Error('Google Drive non è configurato.');
-  if (!state.folder) throw new Error('Scegli prima la cartella Drive (Impostazioni).');
+  if (!state.configured) throw new Error('Il salvataggio su Google Drive non è disponibile in questa versione.');
+  if (!state.folder) throw new Error('Collega prima Google Drive (Impostazioni).');
   if (!auth.getValidToken()) await signIn();
   return runNow({ force: true });
 }
 
-export async function signIn(opts) {
-  const t = await auth.signIn(opts);
+// Numero di schede da salvare su Drive, letto dalla memoria (sincrono: utilizzabile dentro un tocco)
+export function pendingCount() { let n = 0; for (const st of statusMap.values()) if (st !== SYNC_STATUS.SYNCED) n++; return n; }
+export function preloadGoogle() { if (state.configured && navigator.onLine && auth) auth.preload(); }
+export function googleReady() { return !!(auth && auth.isReady()); }
+
+// Messaggio semplice per l'allenatore, per qualunque errore legato a Google/Drive
+export function friendlyError(e) {
+  if (e instanceof GoogleSignInError) return e.message;
+  if (e instanceof DriveOfflineError) return MSG.unreachable;
+  if (e instanceof DriveAuthError) return 'Serve di nuovo l\'accesso a Google: tocca di nuovo.';
+  if (e instanceof DriveHttpError) return 'Google Drive non risponde. Riprova tra poco.';
+  return (e && e.message) || MSG.failed;
+}
+
+// IMPORTANTE (iPhone/Safari): va chiamata in modo sincrono dal gestore del tocco, senza await prima;
+// auth.signIn chiama requestAccessToken subito. Dispositivo già collegato: prompt '' (si chiude da solo).
+export async function signIn(opts = {}) {
+  const t = await auth.signIn({ knownUser: !!state.folder, ...opts });
   state.needsAuth = false;
   try {
     const a = await drive.about();
@@ -197,13 +218,15 @@ export async function signOut({ forgetFolder = false } = {}) {
 }
 
 export async function switchAccount() {
-  await auth.signOut();
+  // prima la richiesta di accesso (dentro il tocco), poi il resto
+  const p = auth.signIn({ selectAccount: true });
+  await p;
   await repo.setSetting('drive', null);
   await resetRemoteFiles();
-  await signIn({ selectAccount: true });
+  await refreshState();
 }
 
-async function setFolder(folder) {
+async function setFolder(folder, { run = true } = {}) {
   const prev = await repo.getSetting('drive', null);
   await repo.setSetting('drive', { folderId: folder.id, folderName: folder.name, account: state.account, chosenAt: new Date().toISOString() });
   if (!prev || prev.folderId !== folder.id) {
@@ -211,8 +234,27 @@ async function setFolder(folder) {
     await markAllDirty();
   }
   await refreshState();
-  await checkRestoreHint(folder.id).catch(() => {});
+  if (run) {
+    await checkRestoreHint(folder.id).catch(() => {});
+    runNow({ force: true });
+  }
+}
+
+// Collegamento in UN tocco (da un gesto dell'utente): accesso Google, poi la cartella "Rugby Coach" viene
+// ritrovata (se l'app l'aveva già creata, anche da un altro telefono) o creata nella radice del Drive.
+// Se esisteva già, le schede salvate lì vengono recuperate subito (unione: vince la modifica più recente).
+export async function connectDrive() {
+  if (!state.configured) throw new Error('Il salvataggio su Google Drive non è disponibile in questa versione.');
+  if (!auth.getValidToken()) await signIn();
+  const { folder, created } = await findOrCreateAppFolder(drive, DEFAULT_FOLDER_NAME, APP_ID);
+  await setFolder(folder, { run: false });
+  let restored = null;
+  if (!created) {
+    try { restored = await restoreFromDrive(); } catch (e) { if (e instanceof DriveAuthError) throw e; console.warn('Recupero schede non riuscito', e); }
+  }
+  await repo.setSetting('restoreHint', null);
   runNow({ force: true });
+  return { folder, created, restored };
 }
 
 // Nuovo dispositivo: se la cartella contiene backup di schede che qui non ci sono, la home propone il ripristino
@@ -257,7 +299,9 @@ export async function markAllDirty() {
 }
 
 export async function syncRecordNow(kind, id) {
+  const tok = state.configured && state.folder && !auth.getValidToken() ? signIn() : null; // subito, dentro il tocco
   await engine.markDirty(kind, id);
+  if (tok) await tok;
   return syncNow();
 }
 
@@ -307,21 +351,22 @@ export async function restoreFromDrive() {
 export async function saveConfig(cfg) {
   await repo.setSetting('google', { clientId: (cfg.clientId || '').trim(), apiKey: (cfg.apiKey || '').trim(), appId: (cfg.appId || '').trim() });
   auth.clearToken();
+  auth.reset();
   await refreshState();
   if (state.configured && navigator.onLine) auth.preload();
 }
 
 export function hasToken() { return auth ? auth.hasToken() : false; }
 
-// Etichetta dello stato di sincronizzazione di una scheda (R7)
+// Stato di salvataggio di una scheda, in parole semplici (R7)
 export function statusLabel(entry) {
-  if (!state.configured) return { text: 'Salvato in locale', cls: 'local', title: 'Google Drive non configurato: i dati restano su questo dispositivo' };
-  if (!state.folder) return { text: 'Salvato in locale', cls: 'local', title: 'Scegli una cartella Drive nelle Impostazioni per sincronizzare' };
-  if (!entry || !entry.status) return { text: 'Salvato in locale', cls: 'local', title: 'Non ancora inviato a Drive' };
+  const local = { text: 'Salvato sul telefono', cls: 'local', title: 'Le schede restano su questo telefono' };
+  if (!state.configured || !state.folder) return local;
+  if (!entry || !entry.status) return { ...local, title: 'Verrà salvato anche su Drive' };
   switch (entry.status) {
-    case SYNC_STATUS.SYNCED: return { text: 'Sincronizzato su Drive', cls: 'synced', title: entry.syncedAt ? 'Ultimo invio: ' + new Date(entry.syncedAt).toLocaleString('it-IT') : '' };
-    case SYNC_STATUS.SYNCING: return { text: 'Sincronizzazione…', cls: 'syncing', title: '' };
-    case SYNC_STATUS.ERROR: return { text: 'Errore di sincronizzazione', cls: 'error', title: entry.error || '' };
-    default: return { text: 'In attesa di sincronizzazione', cls: 'pending', title: entry.error || (state.needsAuth ? 'Accedi a Google per inviare' : navigator.onLine ? '' : 'Offline: partirà al ritorno della rete') };
+    case SYNC_STATUS.SYNCED: return { text: 'Salvato su Drive ✓', cls: 'synced', title: entry.syncedAt ? 'Ultimo salvataggio: ' + new Date(entry.syncedAt).toLocaleString('it-IT') : '' };
+    case SYNC_STATUS.SYNCING: return { text: 'Salvataggio su Drive…', cls: 'syncing', title: '' };
+    case SYNC_STATUS.ERROR: return { text: 'Non salvato su Drive', cls: 'error', title: 'Riprovo da solo tra poco' };
+    default: return { text: 'Da salvare su Drive', cls: 'pending', title: state.needsAuth ? 'Tocca "Salva su Drive" per completare' : navigator.onLine ? 'Tra pochi secondi' : 'Senza rete: si salva quando torna la connessione' };
   }
 }

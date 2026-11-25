@@ -34,6 +34,16 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 800 
 // La sandbox non raggiunge Google: gli script GIS/Picker vengono sostituiti da uno stub vuoto
 // (le chiamate reali a Drive sono testate con fetch finto in tests/sync.test.mjs).
 await context.route(/https:\/\/(accounts|apis)\.google\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: '/* stub Google */' }));
+await context.route('https://www.googleapis.com/**', (route) => route.fulfill({ status: 503, body: '' }));
+// Questo E2E prova la modalità SENZA Client ID: config.js reale sostituito da uno vuoto (il Drive è provato,
+// sempre con un Drive finto, in tests/e2e-multidevice.mjs). Nessuna chiamata reale a Google.
+await context.route(BASE + 'config.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: 'export default { clientId: "" };' }));
+// Web Share API finta: registra i file condivisi (verifica del pulsante "Condividi")
+await context.addInitScript(() => {
+  window.__shared = [];
+  Object.defineProperty(navigator, 'canShare', { configurable: true, value: (d) => !!(d && d.files && d.files.length && d.files.every((f) => f instanceof File)) });
+  Object.defineProperty(navigator, 'share', { configurable: true, value: async (d) => { window.__shared.push(d.files.map((f) => ({ name: f.name, type: f.type, size: f.size }))); } });
+});
 const page = await context.newPage();
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -46,21 +56,21 @@ const settle = (ms = 900) => page.waitForTimeout(ms); // attende l'autosave (deb
 const reload = async () => { await page.reload(); await ready(); await settle(300); };
 
 try {
-  await step('primo avvio: onboarding e modalità solo locale', async () => {
+  await step('primo avvio senza Client ID: schermata semplice e app solo sul telefono', async () => {
     await page.goto(BASE);
     await ready();
     assert.match(page.url(), /#\/benvenuto$/);
+    await page.getByRole('heading', { name: 'Benvenuto in Rugby Coach' }).waitFor();
+    assert.equal(await page.getByText(/Client ID|API key|configura/i).count(), 0, 'nessun campo di configurazione per l\'utente');
     await shot('01-onboarding');
-    await page.getByRole('button', { name: 'Usa solo in locale per ora' }).click();
+    await page.getByRole('button', { name: 'Inizia' }).click();
     await page.waitForURL(/#\/$/);
-    await page.getByText('Modalità solo locale.').waitFor();
-    await page.getByText('dati di esempio').first().waitFor();
-    await page.getByRole('button', { name: 'Solo locale' }).waitFor();
+    await page.getByRole('button', { name: 'Sul telefono' }).waitFor();
     await shot('02-home');
   });
 
   await step('dati di esempio: piano I° trimestre e libreria', async () => {
-    await page.getByRole('link', { name: 'Piani trimestrali' }).click();
+    await page.getByRole('link', { name: 'Piani', exact: true }).click();
     await page.locator('.rec-card .rec-main', { hasText: 'I° TRIMESTRE' }).first().click();
     await page.waitForURL(/#\/piano\//);
     await page.getByRole('heading', { name: 'VIII°' }).waitFor();
@@ -88,7 +98,7 @@ try {
   let sessionUrl;
   await step('nuova seduta: foglio allenamento (programma, totali, bilancio, errori, autovalutazione, preparatore)', async () => {
     await page.getByRole('link', { name: 'Schede' }).click();
-    await page.getByRole('button', { name: '+ Nuova seduta' }).first().click();
+    await page.getByRole('button', { name: '+ Nuovo allenamento' }).first().click();
     await page.waitForURL(/#\/seduta\/.+\/foglio$/);
     sessionUrl = page.url();
     await page.locator('.t-plan .tr:not(.th)').first().waitFor();
@@ -235,10 +245,16 @@ try {
     await page.locator('.att-item.total').getByText('7').waitFor();
   });
 
-  await step('scarica Word della seduta (docx generato nel browser)', async () => {
+  await step('Condividi (Web Share con file) e Scarica Word dal menu Altro', async () => {
     await page.getByRole('link', { name: 'Foglio allenamento', exact: true }).click();
+    await page.getByRole('button', { name: '↗ Condividi' }).click();
+    await page.waitForFunction(() => window.__shared.length === 1, null, { timeout: 10000 });
+    const shared = await page.evaluate(() => window.__shared[0]);
+    assert.deepEqual(shared.map((f) => f.name).sort(), ['2026-11-24 Allenamento U8.docx', '2026-11-24 Scheda di allenamento U8.docx']);
+    assert.ok(shared.every((f) => f.type.includes('wordprocessingml') && f.size > 3000));
     const downloads = [];
     page.on('download', (d) => downloads.push(d));
+    await page.getByRole('button', { name: 'Altre azioni' }).click();
     await page.getByRole('button', { name: '⬇ Scarica Word' }).click();
     await page.waitForTimeout(2500);
     assert.ok(downloads.length >= 2, 'foglio + osservazione: ' + downloads.length);
@@ -280,8 +296,7 @@ try {
   });
 
   await step('piano: crea foglio allenamento precompilato dalla seduta I°', async () => {
-    await page.getByRole('link', { name: 'Schede' }).click();
-    await page.getByRole('link', { name: 'Piani trimestrali' }).click();
+    await page.goto(BASE + '#/?t=piani'); await ready();
     await page.locator('.rec-card .rec-main', { hasText: 'I° TRIMESTRE' }).first().click();
     await page.locator('.plan-session').first().getByRole('button', { name: '→ Crea foglio allenamento' }).click();
     await page.waitForURL(/#\/seduta\/.+\/foglio$/);
@@ -314,129 +329,42 @@ try {
     assert.equal(await page.locator('.t-plan .tr:not(.th)').nth(2).locator('img.thumb').count(), 1);
   });
 
-  await step('impostazioni: configurazione Google da Impostazioni, export JSON', async () => {
-    await page.getByRole('link', { name: 'Impostazioni' }).click();
-    await page.getByText('Sincronizzazione monodirezionale').waitFor();
+  await step('libreria: Condividi la libreria esercizi (un .docx con i disegni)', async () => {
+    await page.goto(BASE + '#/libreria'); await ready();
+    await page.getByRole('button', { name: '↗ Condividi la libreria' }).click();
+    await page.waitForFunction(() => window.__shared.length >= 1, null, { timeout: 10000 }); // (l'elenco riparte a ogni caricamento di pagina)
+    const f = await page.evaluate(() => window.__shared.at(-1));
+    assert.equal(f.length, 1);
+    assert.equal(f[0].name, 'Rugby Coach - Libreria esercizi.docx');
+  });
+
+  await step('impostazioni: niente configurazione in vista; avanzate chiuse; esporta dati da Avanzate', async () => {
+    await page.goto(BASE + '#/impostazioni'); await ready();
+    await page.getByText('il salvataggio su Google Drive non è attivo').waitFor();
+    assert.equal(await page.getByLabel('Client ID OAuth').isVisible(), false, 'campi sviluppatore nascosti');
     await shot('14-impostazioni');
+    await page.getByText('Avanzate', { exact: true }).click();
     const dl = page.waitForEvent('download');
-    await page.getByRole('button', { name: '⬇ Esporta tutto (JSON)' }).click();
+    await page.getByRole('button', { name: '⬇ Esporta tutti i dati (file .json)' }).click();
     const d = await dl;
     const file = path.join(ROOT, 'out', 'e2e-backup.json');
     await d.saveAs(file);
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.equal(data.app, 'rugby-coach');
     assert.ok(data.data.sessions.length >= 2 && data.data.matches.length >= 1 && data.data.players.length === 3);
+    await page.getByText('Configurazione Google (sviluppatori)').click();
     await page.getByLabel('Client ID OAuth').fill('123-test.apps.googleusercontent.com');
     await page.getByRole('button', { name: 'Salva configurazione' }).click();
-    await page.getByText('presente (da impostazioni)').waitFor();
-    await page.getByRole('button', { name: 'Drive non collegato' }).waitFor();
+    await page.getByRole('button', { name: 'Collega Google Drive' }).waitFor();
     await shot('15-impostazioni-configurato', { full: true });
-    await page.getByRole('link', { name: 'Schede' }).click();
-    await page.getByText('Google Drive non collegato.').waitFor();
-    await page.locator('.status-pill', { hasText: 'Salvato in locale' }).first().waitFor();
-    await page.getByRole('link', { name: 'Impostazioni' }).click();
-    await page.getByText('Configurazione Google Cloud (Client ID, API key, App ID)').click();
+    await page.goto(BASE + '#/'); await ready();
+    await page.getByText('Salva le schede su Google Drive').waitFor();
+    await page.locator('.status-pill', { hasText: 'Salvato sul telefono' }).first().waitFor();
+    await page.goto(BASE + '#/impostazioni'); await ready();
+    await page.getByText('Avanzate', { exact: true }).click();
+    await page.getByText('Configurazione Google (sviluppatori)').click();
     await page.getByRole('button', { name: 'Rimuovi', exact: true }).click();
-    await page.getByText('assente — l\'app funziona in solo-locale').waitFor();
-  });
-
-  await step('Google Drive simulato: cartella dedicata, upload .docx + .json, aggiornamento dello stesso file (PATCH)', async () => {
-    const drive = { files: new Map(), calls: [], n: 0 };
-    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
-    await context.route('https://www.googleapis.com/**', async (route) => {
-      const req = route.request();
-      const u = new URL(req.url());
-      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-      drive.calls.push(`${req.method()} ${u.pathname}${u.search.includes('uploadType=multipart') ? ' multipart' : ''}`);
-      assert.equal(req.headers()['authorization'], 'Bearer finto-token');
-      const json = (obj) => route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(obj) });
-      if (u.pathname === '/drive/v3/files' && req.method() === 'POST') {
-        const meta = JSON.parse(req.postData());
-        drive.files.set('folder1', { ...meta, id: 'folder1' });
-        return json({ id: 'folder1', name: meta.name });
-      }
-      if (u.pathname === '/upload/drive/v3/files' && req.method() === 'POST') {
-        const body = req.postDataBuffer().toString('latin1');
-        const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n/s.exec(body)[1]);
-        const id = 'f' + (++drive.n);
-        assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
-        const content = body.split('\r\n\r\n').slice(2).join('\r\n\r\n').replace(/\r\n--[^\r\n]+--$/, '');
-        drive.files.set(id, { ...meta, id, size: body.length, version: 1, content: Buffer.from(content, 'latin1').toString('utf8') });
-        return json({ id, name: meta.name, webViewLink: 'https://drive.example/' + id });
-      }
-      const media = /^\/drive\/v3\/files\/([^/]+)$/.exec(u.pathname);
-      if (media && u.searchParams.get('alt') === 'media') {
-        const f = drive.files.get(media[1]);
-        return f ? route.fulfill({ status: 200, headers: cors, body: f.content || '' }) : json({}, 404);
-      }
-      if (u.pathname === '/drive/v3/files' && req.method() === 'GET') {
-        assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
-        const q = u.searchParams.get('q') || '';
-        const parent = /'([^']+)' in parents/.exec(q)?.[1];
-        const list = [...drive.files.values()].filter((f) => f.appProperties?.rcApp === 'rugby-coach' && (!parent || (f.parents || []).includes(parent)) && (!/mimeType='application\/json'/.test(q) || f.mimeType === 'application/json'));
-        return json({ files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, parents: f.parents, appProperties: f.appProperties })) });
-      }
-      const m = /^\/upload\/drive\/v3\/files\/(.+)$/.exec(u.pathname);
-      if (m && req.method() === 'PATCH') {
-        const f = drive.files.get(m[1]);
-        const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n/s.exec(req.postDataBuffer().toString('latin1'))[1]);
-        assert.ok(!meta.parents);
-        const pb = req.postDataBuffer().toString('latin1');
-        const content = pb.split('\r\n\r\n').slice(2).join('\r\n\r\n').replace(/\r\n--[^\r\n]+--$/, '');
-        Object.assign(f, meta, { version: f.version + 1, content: Buffer.from(content, 'latin1').toString('utf8') });
-        return json({ id: f.id, name: f.name });
-      }
-      return route.fulfill({ status: 404, headers: cors, body: '{}' });
-    });
-    await page.goto(BASE + '#/impostazioni'); await ready();
-    await page.getByLabel('Client ID OAuth').fill('123-test.apps.googleusercontent.com');
-    await page.getByLabel('API key').fill('AIzaFinta');
-    await page.getByLabel('App ID (numero progetto)').fill('123456789012');
-    await page.getByRole('button', { name: 'Salva configurazione' }).click();
-    await page.getByText('presente (da impostazioni)').waitFor();
-    // token OAuth finto (il popup Google non è testabile qui)
-    await page.evaluate(() => localStorage.setItem('rc.google.token', JSON.stringify({ access_token: 'finto-token', expiresAt: Date.now() + 3600e3 })));
-    await reload();
-    await page.getByLabel('Nome della nuova cartella').fill('Rugby Coach');
-    await page.getByRole('button', { name: '＋ Crea cartella dedicata' }).click();
-    await page.getByRole('link', { name: 'Rugby Coach' }).waitFor();
-    await page.getByRole('button', { name: 'Drive ✓' }).waitFor();
-    await page.waitForFunction(() => document.querySelectorAll('.queue .status-pill.synced').length >= 3, null, { timeout: 20000 }).catch(async () => {
-      // eslint-disable-line
-      await page.goto(BASE + '#/impostazioni'); await ready();
-      await page.waitForFunction(() => document.querySelectorAll('.queue .status-pill.synced').length >= 3, null, { timeout: 20000 });
-    });
-    const names = [...drive.files.values()].map((f) => f.name).sort();
-    for (const n of ['2026-11-24 Allenamento U8.docx', '2026-11-24 Allenamento U8.json', '2026-11-24 Scheda di allenamento U8.docx', '2026-11-22 Partita U8 vs Rugby Club Esempio.docx']) {
-      assert.ok(names.includes(n), 'manca su Drive: ' + n + ' in ' + names.join(', '));
-    }
-    assert.ok([...drive.files.values()].filter((f) => f.id !== 'folder1').every((f) => f.parents && f.parents[0] === 'folder1' && f.appProperties.rcApp === 'rugby-coach'));
-    await shot('16-drive-simulato', { full: true });
-    const before = drive.files.size;
-    await page.goto(sessionUrl); await ready();
-    await page.getByLabel('Nome esercizio 1').fill('Fulmine (variante)');
-    await page.locator('.page-actions .status-pill', { hasText: 'In attesa di sincronizzazione' }).waitFor({ timeout: 5000 });
-    await page.locator('.page-actions .status-pill', { hasText: 'Sincronizzato su Drive' }).waitFor({ timeout: 20000 });
-    assert.equal(drive.files.size, before, 'nessun file duplicato');
-    assert.ok(drive.calls.some((c) => c.startsWith('PATCH /upload/drive/v3/files/') && c.endsWith('multipart')), 'aggiornamento PATCH multipart');
-    await page.getByLabel('Nome esercizio 1').fill('Fulmine');
-    await settle(5500);
-    // libreria esercizi e rosa salvate su Drive (backup .json + .docx della libreria)
-    const kinds = new Set([...drive.files.values()].map((f) => f.appProperties?.rcKind));
-    assert.ok(kinds.has('exercise') && kinds.has('player'), 'raccolte su Drive: ' + [...kinds].join(','));
-    // "Disconnetti e dimentica cartella" e poi la stessa cartella di nuovo: nessun duplicato
-    const n0 = drive.files.size;
-    await page.goto(BASE + '#/impostazioni'); await ready();
-    await page.getByRole('button', { name: 'Disconnetti' }).click();
-    await page.locator('dialog.modal').getByRole('button', { name: 'Disconnetti e dimentica cartella' }).click();
-    await page.getByText('non scelta').waitFor();
-    await page.evaluate(() => sessionStorage.setItem('rc.google.token', JSON.stringify({ access_token: 'finto-token', expiresAt: Date.now() + 3600e3 })));
-    await reload();
-    // ricrea "Rugby Coach": il finto Drive restituisce lo stesso id cartella (folder1)
-    await page.getByRole('button', { name: '＋ Crea cartella dedicata' }).click();
-    await page.getByRole('link', { name: 'Rugby Coach' }).waitFor();
-    await page.waitForFunction(() => document.querySelectorAll('.queue .status-pill.synced').length >= 4 && !document.querySelector('.queue .status-pill.pending, .queue .status-pill.syncing'), null, { timeout: 25000 });
-    assert.equal(drive.files.size, n0, `ricollegando la stessa cartella: ${n0} -> ${drive.files.size} file`);
+    await page.getByText('il salvataggio su Google Drive non è attivo').waitFor();
   });
 
   await step('offline: l\'app si riapre dalla cache del service worker', async () => {
@@ -453,45 +381,82 @@ try {
     await page.getByLabel('Nome esercizio 5').fill('Partita finale');
     await settle();
     await shot('17-offline');
-    // docx anche offline (libreria vendorizzata in cache)
-    const dl = page.waitForEvent('download', { timeout: 10000 });
-    await page.getByRole('button', { name: '⬇ Scarica Word' }).click();
-    await dl;
-    // guida Google Cloud come pagina dell'app, disponibile offline
-    await page.goto(BASE + '#/guida'); await ready();
-    await page.getByRole('heading', { name: '4. Crea il Client ID (tipo "Applicazione web")' }).waitFor();
-    await page.locator('.md-doc table').first().waitFor();
-    await shot('17b-guida-offline');
+    // documento Word anche offline (libreria vendorizzata in cache)
+    await page.getByRole('button', { name: '↗ Condividi' }).click();
+    await page.waitForFunction(() => window.__shared.length >= 1, null, { timeout: 10000 });
+    // aiuto per l'allenatore come pagina dell'app, disponibile offline
+    await page.goto(BASE + '#/info'); await ready();
+    await page.getByRole('heading', { name: 'Mettere l\'app sul telefono' }).waitFor();
+    await page.getByRole('heading', { name: 'Se cambio telefono' }).waitFor();
+    await shot('17b-aiuto-offline');
     await context.setOffline(false);
   });
 
-  await step('telefono: layout a card', async () => {
+  await step('telefono (390×844 e 360×740): pagine principali, nessun gergo tecnico, nessuno scorrimento orizzontale', async () => {
+    const JARGON = /\b(token|sync|json|oauth|coda|client id|api key|indexeddb|service worker|backup|cache|sincronizz\w*|in locale)\b/i;
+    const userPages = {
+      home: '#/', partite: '#/?t=partite', piani: '#/?t=piani', foglio: sessionUrl.replace(BASE, ''), osservazione: sessionUrl.replace(BASE, '').replace(/foglio$/, 'osservazione'),
+      libreria: '#/libreria', rosa: '#/rosa', impostazioni: '#/impostazioni', aiuto: '#/info',
+    };
+    for (const [w, hgt] of [[390, 844], [360, 740]]) {
+      await page.setViewportSize({ width: w, height: hgt });
+      for (const [name, url] of Object.entries(userPages)) {
+        await page.goto(BASE + url); await ready(); await settle(400);
+        const text = await page.evaluate(() => document.body.innerText);
+        const m = JARGON.exec(text);
+        assert.ok(!m, `gergo tecnico "${m && m[0]}" in ${name} (${w}px)`);
+        const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+        assert.ok(hs <= 1, `scorrimento orizzontale in ${name} (${w}px): ${hs}px`);
+        if (w === 390) await shot(`18-telefono-${name}`);
+      }
+      await page.goto(BASE + '#/partita/' + (await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('rugby-coach'); r.onsuccess = () => { const g = r.result.transaction('matches').objectStore('matches').getAll(); g.onsuccess = () => res(g.result[0].id); }; })))); await ready();
+      assert.ok(!JARGON.test(await page.evaluate(() => document.body.innerText)), 'gergo nella partita');
+      if (w === 390) await shot('18-telefono-partita');
+    }
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(sessionUrl); await ready();
-    await shot('18-telefono-foglio');
-    await page.locator('#sez-errori').scrollIntoViewIfNeeded();
-    await shot('19-telefono-errori');
-    await page.goto(BASE + '#/?t=partite'); await ready();
-    await page.locator('.rec-main').first().click();
-    await page.waitForURL(/#\/partita\//);
-    await shot('20-telefono-partita');
-    await page.locator('.t-match .tr:not(.th)').first().getByRole('button', { name: '✎ Disegna' }).count();
     await page.goto(sessionUrl); await ready();
     await page.locator('.t-plan .thumb-btn').first().click();
     await page.locator('.board-svg').waitFor();
     await shot('21-telefono-tactic-board');
     await page.getByRole('button', { name: '✕ Chiudi' }).click();
+    // menu ⋯ di una scheda nell'elenco
+    await page.goto(BASE + '#/'); await ready();
+    await page.locator('.rec-card').first().getByRole('button', { name: 'Altre azioni' }).click();
+    await shot('22-telefono-menu-scheda');
     await page.setViewportSize({ width: 1280, height: 800 });
   });
 
-  await step('elimina i dati di esempio', async () => {
-    await page.goto(BASE + '#/'); await ready();
-    await page.getByRole('button', { name: 'Elimina esempi' }).click();
+  await step('elimina i dati di esempio (Impostazioni › Avanzate)', async () => {
+    await page.goto(BASE + '#/impostazioni'); await ready();
+    await page.getByText('Avanzate', { exact: true }).click();
+    await page.getByRole('button', { name: /Elimina dati di esempio/ }).click();
+    await page.locator('dialog.modal').getByRole('button', { name: 'Elimina esempi' }).click();
     await page.waitForTimeout(1500);
     await ready();
     await page.goto(BASE + '#/libreria'); await ready();
     const n = await page.locator('.ex-card').count();
     assert.equal(n, 1, 'resta solo l\'esercizio modificato? ' + n);
+  });
+  await step('config.js reale: la prima schermata propone subito "Collega Google Drive" (Google simulato, nessuna chiamata reale)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'it-IT' });
+    const googleHits = [];
+    await ctx.route(/^https:\/\/([a-z0-9-]+\.)*(google|googleapis|gstatic)\.com\//, (route) => { googleHits.push(route.request().url()); route.fulfill({ status: 200, contentType: 'text/javascript', body: '/* stub */' }); });
+    const p2 = await ctx.newPage();
+    p2.on('console', (m) => { if (m.type() === 'error') errors.push('config reale: ' + m.text()); });
+    await p2.goto(BASE); await p2.waitForFunction(() => window.__rcReady === true, null, { timeout: 20000 });
+    await p2.getByRole('heading', { name: 'Salva le tue schede su Google Drive' }).waitFor();
+    await p2.getByRole('button', { name: 'Collega Google Drive' }).waitFor();
+    assert.equal(await p2.locator('.bottom-nav').isVisible(), false, 'prima schermata essenziale');
+    const cfg = fs.readFileSync(path.join(ROOT, 'app', 'config.js'), 'utf8');
+    assert.match(cfg, /clientId: '\d+-[a-z0-9]+\.apps\.googleusercontent\.com'/, 'Client ID reale in app/config.js');
+    await p2.screenshot({ path: path.join(SHOTS, '29-telefono-onboarding-config-reale.png') });
+    await p2.getByRole('link', { name: 'Informativa sulla privacy' }).click();
+    await p2.getByRole('heading', { name: 'Informativa sulla privacy' }).waitFor();
+    await p2.getByText('drive.file').first().waitFor();
+    await p2.getByRole('link', { name: 'bordonileonardo@gmail.com' }).waitFor();
+    await p2.screenshot({ path: path.join(SHOTS, '29b-telefono-privacy.png'), fullPage: true });
+    assert.ok(googleHits.every((u) => /accounts\.google\.com\/gsi\/client/.test(u)), 'solo lo script di accesso (simulato): ' + googleHits.join(', '));
+    await ctx.close();
   });
 } finally {
   await browser.close();

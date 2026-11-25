@@ -1,7 +1,7 @@
 // Drive + coda di sincronizzazione con un fetch finto (il Drive reale non è testabile senza Client ID).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDriveClient, buildMultipart, DriveAuthError, DOCX_MIME, FOLDER_MIME } from '../app/js/drive.js';
+import { createDriveClient, buildMultipart, DriveAuthError, DOCX_MIME, FOLDER_MIME, findOrCreateAppFolder } from '../app/js/drive.js';
 import { createSyncEngine, SYNC_STATUS, buildRemoteIndex } from '../app/js/sync.js';
 
 // Finto Drive in memoria che risponde come l'API v3
@@ -32,7 +32,7 @@ function fakeDrive({ failWith } = {}) {
     if (opts.method === 'POST' && !upload) {
       const meta = JSON.parse(opts.body);
       const fid = 'f' + (++n);
-      files.set(fid, { id: fid, ...meta, content: null });
+      files.set(fid, { id: fid, ...meta, content: null, createdTime: new Date(1700000000000 + n * 1000).toISOString() });
       return json(200, { id: fid, name: meta.name });
     }
     if (opts.method === 'POST' && upload) {
@@ -56,9 +56,12 @@ function fakeDrive({ failWith } = {}) {
       assert.equal(u.searchParams.get('includeItemsFromAllDrives'), 'true');
       const q = u.searchParams.get('q') || '';
       const parent = /'([^']+)' in parents/.exec(q)?.[1];
-      const list = [...files.values()].filter((f) => f.appProperties?.rcApp === 'rugby-coach' && (!parent || (f.parents || []).includes(parent)));
+      const props = [...q.matchAll(/appProperties has \{ key='(\w+)' and value='([^']*)' \}/g)];
+      const mime = /mimeType='([^']+)'/.exec(q)?.[1];
+      const list = [...files.values()].filter((f) => f.appProperties && props.every(([, k, v]) => f.appProperties[k] === v)
+        && (!parent || (f.parents || []).includes(parent)) && (!mime || f.mimeType === mime));
       state.lists = (state.lists || 0) + 1;
-      return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, appProperties: f.appProperties })) });
+      return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdTime: f.createdTime, appProperties: f.appProperties })) });
     }
     if (opts.method === 'GET' && id) {
       const f = files.get(id);
@@ -316,4 +319,25 @@ test('ripristino: adopt segna "sincronizzato" senza caricare nulla; pending rime
   assert.equal(fd.calls.length, calls, 'nessuna chiamata a Drive');
   await engine.adopt('session', 'r', {}, { pending: true });
   assert.equal((await engine.getStatus('session', 'r')).status, SYNC_STATUS.PENDING);
+});
+
+test('collegamento in un tocco: crea "Rugby Coach" nella radice la prima volta, poi la ritrova (nessun duplicato)', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  const a = await findOrCreateAppFolder(drive);
+  assert.equal(a.created, true);
+  const f = fd.files.get(a.folder.id);
+  assert.equal(f.name, 'Rugby Coach');
+  assert.equal(f.mimeType, FOLDER_MIME);
+  assert.ok(!f.parents, 'nella radice del Drive');
+  assert.deepEqual(f.appProperties, { rcApp: 'rugby-coach', rcKind: 'folder' });
+  // un file .json dell'app nella stessa cartella non deve essere scambiato per la cartella
+  fd.files.set('j1', { id: 'j1', name: 'x.json', mimeType: 'application/json', parents: [a.folder.id], appProperties: { rcApp: 'rugby-coach', rcKind: 'session', rcId: 's' } });
+  const b = await findOrCreateAppFolder(drive); // secondo telefono / ricollegamento
+  assert.equal(b.created, false);
+  assert.equal(b.folder.id, a.folder.id);
+  assert.equal([...fd.files.values()].filter((x) => x.mimeType === FOLDER_MIME).length, 1);
+  // se per qualche motivo ce ne sono due, si usa la più vecchia
+  fd.files.set('zz', { id: 'zz', name: 'Rugby Coach', mimeType: FOLDER_MIME, createdTime: '2030-01-01T00:00:00Z', appProperties: { rcApp: 'rugby-coach', rcKind: 'folder' } });
+  assert.equal((await findOrCreateAppFolder(drive)).folder.id, a.folder.id);
 });

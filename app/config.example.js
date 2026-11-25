@@ -1,12 +1,8 @@
-// Copia questo file in config.js (o compila i campi in Impostazioni → Google Drive).
-// Questi valori NON sono segreti: il Client ID e la API key di un'app web statica sono pubblici per natura.
-// Limita comunque la API key ai siti dell'app (+ https://docs.google.com/*) e alle API "Google Picker API" e "Google Drive API"
-// (vedi GUIDA_GOOGLE_CLOUD.md).
+// Esempio di app/config.js (vedi docs/SETUP_GOOGLE.md).
 export default {
-  // ID client OAuth 2.0 di tipo "Applicazione web"
+  // ID client OAuth 2.0 di tipo "Applicazione web" (non è un segreto)
   clientId: '1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com',
-  // Chiave API (serve al Google Picker per scegliere la cartella)
-  apiKey: 'AIzaSy...',
-  // App ID = numero del progetto Google Cloud (solo cifre)
-  appId: '123456789012',
+  // Facoltativi: abilitano in Impostazioni → Avanzate la scelta di una cartella esistente con Google Picker.
+  // apiKey: 'AIzaSy...',   // chiave API limitata ai siti dell'app + https://docs.google.com/*
+  // appId: '123456789012', // numero del progetto Google Cloud
 };

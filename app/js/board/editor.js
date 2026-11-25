@@ -172,9 +172,9 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
       }
       if (!sel) {
         ctxBar.append(h('span.ctx-hint', tool === 'select' ? 'Tocca un elemento per selezionarlo e trascinarlo.' : TOOLS.find((t) => t.id === tool).label + ': tocca o trascina sul campo.'),
-          h('button.btn.small', { type: 'button', on: { click: exportPng } }, 'Scarica PNG'),
-          h('button.btn.small', { type: 'button', on: { click: exportJson } }, 'Scarica JSON'),
-          h('button.btn.small', { type: 'button', on: { click: importJson } }, 'Importa JSON'),
+          h('button.btn.small', { type: 'button', on: { click: exportPng } }, 'Scarica immagine'),
+          h('button.btn.small', { type: 'button', on: { click: exportJson } }, 'Salva disegno su file'),
+          h('button.btn.small', { type: 'button', on: { click: importJson } }, 'Apri disegno da file'),
           h('button.btn.small.danger', { type: 'button', on: { click: clearAll } }, 'Cancella tutto'));
         return;
       }
@@ -408,6 +408,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     window.addEventListener('resize', onResize);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    document.body.classList.add('board-open'); // i messaggi vanno in alto, non sopra gli strumenti
     document.body.appendChild(overlay);
     setTool('select');
     updateButtons();
@@ -415,6 +416,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     function close(result) {
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
+      document.body.classList.remove('board-open');
       overlay.remove();
       document.body.style.overflow = prevOverflow;
       resolve(result);

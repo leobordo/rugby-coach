@@ -1,9 +1,10 @@
 // Service worker: mette in cache l'app shell per l'uso offline (R23).
 // Aggiornare VERSION a ogni rilascio. L'elenco PRECACHE è verificato da tests/sw.test.mjs.
-const VERSION = 'rc-v1.2.0';
+const VERSION = 'rc-v1.3.1';
 const PRECACHE = [
   './',
   './index.html',
+  './privacy.html',
   './manifest.webmanifest',
   './config.js',
   './css/app.css',
@@ -37,10 +38,10 @@ const PRECACHE = [
   './js/views/roster.js',
   './js/views/settings.js',
   './js/markdown.js',
+  './js/share.js',
   './js/views/docs.js',
   './vendor/docx.mjs',
   './README.md',
-  './GUIDA_GOOGLE_CLOUD.md',
 ];
 // Caricati dalla rete quando possibile (l'utente può modificarli sul proprio hosting)
 const NETWORK_FIRST = ['config.js', 'index.html', 'manifest.webmanifest'];
@@ -71,11 +72,12 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const res = await fetch(req);
-        if (res.ok) (await caches.open(VERSION)).put(isNav ? './index.html' : req, res.clone());
+        // ogni pagina è salvata con il proprio indirizzo (index.html, privacy.html...)
+        if (res.ok && res.type === 'basic') (await caches.open(VERSION)).put(req, res.clone());
         return res;
       } catch {
         const cache = await caches.open(VERSION);
-        return (await cache.match(isNav ? './index.html' : req, { ignoreSearch: true })) || (await cache.match('./')) || Response.error();
+        return (await cache.match(req, { ignoreSearch: true })) || (isNav ? (await cache.match('./index.html')) || (await cache.match('./')) : null) || Response.error();
       }
     })());
     return;

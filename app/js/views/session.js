@@ -7,7 +7,7 @@ import {
   isBlankValue, planItemFromExercise, observationFromExercise, observationFromPlanItem, reviewRowLabel, formatDateIT,
   sessionCategories, ordinalRoman, toInt,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName } from './common.js';
+import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton } from './common.js';
 
 export async function sessionView(root, { id, tab = 'foglio' }) {
   const s = await repo.get('session', id);
@@ -43,7 +43,7 @@ export async function sessionView(root, { id, tab = 'foglio' }) {
   const tabObs = h('a.tab' + (isObs ? '.on' : ''), { href: `#/seduta/${s.id}/osservazione`, 'aria-current': isObs ? 'page' : null, on: { click: switchTab(true) } }, 'Scheda di allenamento (osservazione)');
   const tabs = h('nav.tabs', { 'aria-label': 'Pagine della seduta' }, tabFoglio, tabObs);
   const body = h('div.sheet' + (isObs ? '.landscape-obs' : ''));
-  root.append(head, tabs, body);
+  root.append(head, tabs, body, finishButton(saver, { label: '✓ Fine allenamento' }));
 
   const rerender = () => {
     const y = window.scrollY;

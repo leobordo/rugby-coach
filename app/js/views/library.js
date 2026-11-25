@@ -2,7 +2,7 @@
 import { h, clear, textInput, numberInput, textArea, tagInput, categoryPicker, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, newExercise, duplicateRecord, normName } from '../model.js';
-import { autosaver, pageHeader, drawingCell } from './common.js';
+import { autosaver, pageHeader, drawingCell, shareButton } from './common.js';
 import { safeThumb } from '../board/model.js';
 
 export async function libraryView(root, params, query) {
@@ -10,7 +10,8 @@ export async function libraryView(root, params, query) {
   const search = h('input.input', { type: 'search', placeholder: 'Cerca per nome o parola chiave…', 'aria-label': 'Cerca esercizio' });
   const catSel = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Tutte le categorie'), CATEGORIES.map((c) => h('option', { value: c, selected: c === filters.cat }, c)));
   const grid = h('div.ex-grid');
-  root.append(pageHeader('Libreria esercizi', { sub: 'Disegna un esercizio una volta e riusalo nelle sedute.' }),
+  const shareLib = shareButton(async () => ({ kind: 'library', id: 'all', exercises: (await repo.list('exercise')).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it')) }), null, { label: '↗ Condividi la libreria', cls: '' });
+  root.append(pageHeader('Libreria esercizi', { sub: 'Disegna un esercizio una volta e riusalo negli allenamenti.', actions: [shareLib] }),
     h('div.list-toolbar',
       h('button.btn.primary.big', { type: 'button', on: { click: async () => { const e = newExercise(); await repo.save(e); location.hash = '#/esercizio/' + e.id; } } }, '+ Nuovo esercizio'),
       h('div.filters', search, catSel)),

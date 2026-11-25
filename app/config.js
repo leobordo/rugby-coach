@@ -1,8 +1,10 @@
-// Configurazione Google Drive. Lasciare vuoto = modalità solo locale.
-// I valori si possono anche inserire dall'app (Impostazioni → Google Drive), che hanno la precedenza.
-// Vedi config.example.js e GUIDA_GOOGLE_CLOUD.md.
+// Configurazione Google dell'app, a cura dello sviluppatore (vedi docs/SETUP_GOOGLE.md).
+// Serve SOLO il Client ID OAuth di tipo "Applicazione web": non è un segreto.
+// Vuoto = l'app funziona solo sul telefono (senza salvataggio su Google Drive).
 export default {
-  clientId: '',
-  apiKey: '',
-  appId: '',
+  // Progetto Google Cloud rugby-coach-515808 — origini autorizzate: https://leobordo.github.io, http://localhost:8080
+  clientId: '613972924268-728rj0ug6s50d6a5ursccrs16ug6fa6b.apps.googleusercontent.com',
+  // Facoltativi, solo per l'opzione avanzata "usa un'altra cartella" (Google Picker): non usati.
+  // apiKey: '',
+  // appId: '',
 };

@@ -41,12 +41,14 @@ export function debounce(fn, ms) {
 
 // ---------- feedback ----------
 
+// Un messaggio alla volta (il nuovo sostituisce il precedente), breve
 let toastBox = null;
-export function toast(msg, type = 'info', ms = 3200) {
+export function toast(msg, type = 'info', ms = 2600) {
   if (!toastBox) { toastBox = h('div.toasts', { role: 'status', 'aria-live': 'polite' }); document.body.appendChild(toastBox); }
+  clear(toastBox);
   const t = h('div.toast.toast-' + type, msg);
   toastBox.appendChild(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, ms);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, Math.min(ms, 5000));
 }
 
 export function modal({ title, content, actions = [{ label: 'Chiudi', value: null }], wide = false, className = '' }) {

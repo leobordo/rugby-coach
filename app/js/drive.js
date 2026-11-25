@@ -103,6 +103,13 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       return folderId ? files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(folderId)) : files;
     },
 
+    // Cartelle create dall'app (appProperties rcKind=folder), dalla più vecchia
+    async listAppFolders({ appId = 'rugby-coach' } = {}) {
+      const query = `mimeType='${FOLDER_MIME}' and appProperties has { key='rcApp' and value='${qEsc(appId)}' } and appProperties has { key='rcKind' and value='folder' } and trashed=false`;
+      const files = await listAll(query, 'files(id,name,createdTime,appProperties)');
+      return files.sort((a, b) => String(a.createdTime || '').localeCompare(String(b.createdTime || '')));
+    },
+
     async download(id) {
       const res = await request('GET', `${apiBase}/files/${encodeURIComponent(id)}?${q({ alt: 'media' })}`, { raw: true });
       return res.text();
@@ -129,4 +136,13 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       });
     },
   };
+}
+
+// Collegamento in un tocco: ritrova la cartella creata dall'app (es. su un altro telefono) oppure la crea
+// nella radice del Drive. Restituisce { folder, created }.
+export async function findOrCreateAppFolder(drive, name = 'Rugby Coach', appId = 'rugby-coach') {
+  const found = await drive.listAppFolders({ appId });
+  if (found.length) return { folder: { id: found[0].id, name: found[0].name }, created: false };
+  const f = await drive.createFolder(name, { appProperties: { rcApp: appId, rcKind: 'folder' } });
+  return { folder: { id: f.id, name: f.name || name }, created: true };
 }

@@ -510,8 +510,18 @@ export function migrateRecord(rec) {
     v++;
   }
   r.schemaVersion = SCHEMA_VERSION;
-  return normalizeRecord(r);
+  // data di modifica mancante o non valida = la più vecchia possibile (mai "adesso"): nei merge e negli import
+  // un elemento senza data non deve prevalere su una modifica reale
+  const validTs = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v));
+  const hadUpdated = validTs(r.updatedAt) ? r.updatedAt : null;
+  const hadCreated = validTs(r.createdAt) ? r.createdAt : null;
+  const out = normalizeRecord(r);
+  out.updatedAt = hadUpdated || EPOCH;
+  out.createdAt = hadCreated || out.updatedAt;
+  return out;
 }
+
+export const EPOCH = '1970-01-01T00:00:00.000Z';
 
 // Completa i campi mancanti con i valori predefiniti (robustezza verso dati vecchi/importati)
 function fillDefaults(target, defaults) {
