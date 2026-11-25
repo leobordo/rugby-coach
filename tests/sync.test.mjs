@@ -1,7 +1,7 @@
 // Drive + coda di sincronizzazione con un fetch finto (il Drive reale non è testabile senza Client ID).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDriveClient, buildMultipart, DriveAuthError, DOCX_MIME, FOLDER_MIME, findOrCreateAppFolder } from '../app/js/drive.js';
+import { findOrCreateDataFolder, moveRootJson, createDriveClient, buildMultipart, DriveAuthError, DOCX_MIME, FOLDER_MIME, findOrCreateAppFolder } from '../app/js/drive.js';
 import { createSyncEngine, SYNC_STATUS, buildRemoteIndex } from '../app/js/sync.js';
 
 // Finto Drive in memoria che risponde come l'API v3
@@ -47,6 +47,13 @@ function fakeDrive({ failWith } = {}) {
       assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
       const f = files.get(id);
       if (!f) return json(404, { error: { message: 'File not found: ' + id } });
+      const add = u.searchParams.get('addParents'); const rem = u.searchParams.get('removeParents');
+      if (add || rem) {
+        if (state.moveBudget != null && state.moveBudget-- <= 0) return json(503, { error: { message: 'Backend Error' } });
+        state.moves = (state.moves || 0) + 1;
+        f.parents = [...(f.parents || []).filter((x) => x !== rem), ...(add && !(f.parents || []).includes(add) ? [add] : [])];
+        return json(200, { id, parents: f.parents, trashed: !!f.trashed });
+      }
       Object.assign(f, JSON.parse(opts.body));
       state.trashed = (state.trashed || 0) + 1;
       return json(200, { id, trashed: f.trashed });
@@ -72,7 +79,7 @@ function fakeDrive({ failWith } = {}) {
       const list = [...files.values()].filter((f) => !f.trashed && f.appProperties && props.every(([, k, v]) => f.appProperties[k] === v)
         && (!parent || (f.parents || []).includes(parent)) && (!mime || f.mimeType === mime));
       state.lists = (state.lists || 0) + 1;
-      return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdTime: f.createdTime, appProperties: f.appProperties })) });
+      return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdTime: f.createdTime, parents: f.parents, appProperties: f.appProperties })) });
     }
     if (opts.method === 'GET' && id) {
       const f = files.get(id);
@@ -443,4 +450,69 @@ test('drive client: se Drive lascia il file nel cestino dopo il PATCH, lo toglie
   assert.equal(res.trashed, false);
   assert.equal(fd.files.get(f.id).trashed, false);
   assert.ok(fd.calls.some((c) => c.method === 'PATCH' && !c.path.startsWith('/upload/') && c.path.endsWith('/files/' + f.id)));
+});
+
+test('"File per l\'app": ritrovata o creata una volta; due cartelle create insieme -> resta la più vecchia, i file passano lì', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('root', { id: 'root', mimeType: FOLDER_MIME, name: 'Rugby Coach', appProperties: { rcApp: 'rugby-coach', rcKind: 'folder' } });
+  const a = await findOrCreateDataFolder(drive, 'root');
+  assert.equal(a.created, true);
+  assert.equal(fd.files.get(a.id).name, "File per l'app");
+  assert.deepEqual(fd.files.get(a.id).parents, ['root']);
+  const again = await findOrCreateDataFolder(drive, 'root');
+  assert.equal(again.id, a.id); assert.equal(again.created, false);
+  // un secondo telefono ne ha creata un'altra nello stesso momento, con un .json dentro
+  const b = await drive.createFolder("File per l'app", { parentId: 'root', appProperties: { rcApp: 'rugby-coach', rcKind: 'dataFolder' } });
+  const j = await drive.uploadFile({ name: 'x.json', mimeType: 'application/json', parents: [b.id], appProperties: { rcApp: 'rugby-coach', rcKind: 'session', rcId: 'x', rcVariant: 'json' }, data: '{}' });
+  const win = await findOrCreateDataFolder(drive, 'root');
+  assert.equal(win.id, a.id, 'vince la più vecchia');
+  assert.equal(fd.files.get(b.id).trashed, true, 'la doppia nel cestino');
+  assert.deepEqual(fd.files.get(j.id).parents, [a.id], 'il suo .json spostato (stesso id)');
+});
+
+test('migrazione dei .json dalla cartella principale: spostati (stessi id), idempotente, ripresa dopo un\'interruzione; i Word restano', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('root', { id: 'root', mimeType: FOLDER_MIME, name: 'Rugby Coach' });
+  fd.files.set('data', { id: 'data', mimeType: FOLDER_MIME, name: "File per l'app", parents: ['root'] });
+  const ids = [];
+  for (const k of ['a', 'b', 'c', 'd']) ids.push((await drive.uploadFile({ name: k + '.json', mimeType: 'application/json', parents: ['root'], appProperties: { rcApp: 'rugby-coach', rcKind: 'session', rcId: k, rcVariant: 'json' }, data: '{}' })).id);
+  const doc = (await drive.uploadFile({ name: 'a.docx', mimeType: DOCX_MIME, parents: ['root'], appProperties: { rcApp: 'rugby-coach', rcKind: 'session', rcId: 'a', rcVariant: 'docx-plan' }, data: 'x' })).id;
+  const n0 = fd.files.size;
+  fd.state.moveBudget = 2; // Drive in errore dopo 2 spostamenti
+  await assert.rejects(moveRootJson(drive, 'root', 'data'));
+  assert.equal(ids.filter((id) => fd.files.get(id).parents[0] === 'data').length, 2, 'interrotta a metà');
+  fd.state.moveBudget = null;
+  const r = await moveRootJson(drive, 'root', 'data');
+  assert.equal(r.moved, 2, 'riprende solo quelli rimasti');
+  for (const id of ids) assert.deepEqual(fd.files.get(id).parents, ['data']);
+  assert.deepEqual(fd.files.get(doc).parents, ['root'], 'il Word resta nella cartella principale');
+  assert.equal(fd.files.size, n0, 'nessuna copia');
+  assert.deepEqual(await moveRootJson(drive, 'root', 'data'), { moved: 0, found: 0 }, 'idempotente');
+});
+
+test('coda: i .json nuovi in "File per l\'app", i Word nella cartella; un .json ancora nella cartella principale viene ritrovato (niente doppio)', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('folder1', { id: 'folder1', mimeType: FOLDER_MIME, name: 'Rugby Coach' });
+  fd.files.set('data', { id: 'data', mimeType: FOLDER_MIME, name: "File per l'app", parents: ['folder1'] });
+  const records = new Map([['session:n', { date: 'd', text: 'nuova' }], ['session:old', { date: 'e', text: 'vecchia' }]]);
+  // .json di una versione precedente, ancora nella cartella principale
+  const oldJson = await drive.uploadFile({ name: 'e.json', mimeType: 'application/json', parents: ['folder1'], appProperties: { rcApp: 'rugby-coach', rcKind: 'session', rcId: 'old', rcVariant: 'json' }, data: '{}' });
+  const listBoth = async () => [...await drive.listAppFiles('data'), ...await drive.listAppFiles('folder1')];
+  const eng = createSyncEngine({
+    store: memStore(), drive, getRecord: async (k, id) => records.get(k + ':' + id), getFolderId: async () => 'folder1', getJsonFolderId: async () => 'data', listRemote: listBoth,
+    buildArtifacts: async (kind, rec) => [
+      { key: 'docx-plan', name: rec.date + '.docx', mimeType: DOCX_MIME, data: rec.text },
+      { key: 'json', name: rec.date + '.json', mimeType: 'application/json', data: JSON.stringify(rec) },
+    ],
+  });
+  await eng.markDirty('session', 'n'); await eng.markDirty('session', 'old');
+  await eng.processQueue();
+  const n = (await eng.getStatus('session', 'n')).files;
+  assert.deepEqual(fd.files.get(n.json).parents, ['data']);
+  assert.deepEqual(fd.files.get(n['docx-plan']).parents, ['folder1']);
+  assert.equal((await eng.getStatus('session', 'old')).files.json, oldJson.id, 'stesso .json, non un doppio');
+  assert.equal([...fd.files.values()].filter((f) => f.mimeType === 'application/json').length, 2);
 });

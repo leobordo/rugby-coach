@@ -57,6 +57,10 @@ async function driveRoute(route) {
   }
   const media = /^\/drive\/v3\/files\/([^/]+)$/.exec(u.pathname);
   if (media && u.searchParams.get('alt') === 'media') return route.fulfill({ status: 200, headers: cors, body: drive.files.get(media[1])?.content ?? '' });
+  if (media && req.method() === 'GET') {
+    const f = drive.files.get(media[1]);
+    return f ? json({ id: f.id, name: f.name, trashed: !!f.trashed, parents: f.parents }) : json({ error: { message: 'File not found' } }, 404);
+  }
   if (u.pathname === '/upload/drive/v3/files' && req.method() === 'POST') {
     const [m, c] = partsOf(req.postDataBuffer());
     const id = 'f' + (++drive.n);
@@ -67,8 +71,13 @@ async function driveRoute(route) {
   if (tm && req.method() === 'PATCH') { // files.update { trashed: true }
     const f = drive.files.get(tm[1]);
     if (!f) return json({ error: { message: 'File not found' } }, 404);
-    Object.assign(f, JSON.parse(req.postData()));
-    return json({ id: f.id, trashed: f.trashed });
+    const add = u.searchParams.get('addParents'); const remove = u.searchParams.get('removeParents');
+    if (add || remove) { // spostamento: stesso file, cambia cartella
+      drive.moves = (drive.moves || 0) + 1;
+      f.parents = [...(f.parents || []).filter((x) => x !== remove), ...(add && !(f.parents || []).includes(add) ? [add] : [])];
+    }
+    Object.assign(f, JSON.parse(req.postData() || '{}'));
+    return json({ id: f.id, trashed: f.trashed, parents: f.parents });
   }
   const pm = /^\/upload\/drive\/v3\/files\/(.+)$/.exec(u.pathname);
   if (pm && req.method() === 'PATCH') {
@@ -81,7 +90,19 @@ async function driveRoute(route) {
   }
   return json({ error: { message: 'non simulato ' + u.pathname } }, 404);
 }
-const folders = () => [...drive.files.values()].filter((f) => f.mimeType === FOLDER && !f.trashed);
+const folders = () => [...drive.files.values()].filter((f) => f.mimeType === FOLDER && !f.trashed && f.appProperties?.rcKind === 'folder');
+const dataFolders = () => [...drive.files.values()].filter((f) => f.mimeType === FOLDER && !f.trashed && f.appProperties?.rcKind === 'dataFolder');
+// nella cartella principale solo documenti Word; i .json in "File per l'app"
+const assertLayout = (what) => {
+  const root = folders()[0]; const data = dataFolders();
+  assert.equal(data.length, 1, what + ': una sola "File per l\'app"');
+  assert.equal(data[0].name, "File per l'app"); assert.deepEqual(data[0].parents, [root.id]);
+  const live = [...drive.files.values()].filter((f) => !f.trashed && f.mimeType !== FOLDER);
+  const jsonInRoot = live.filter((f) => f.mimeType === 'application/json' && (f.parents || []).includes(root.id));
+  assert.equal(jsonInRoot.length, 0, what + ': .json nella cartella principale: ' + jsonInRoot.map((f) => f.name).join(', '));
+  assert.ok(live.filter((f) => f.mimeType === 'application/json').every((f) => (f.parents || []).includes(data[0].id)), what + ': .json fuori da "File per l\'app"');
+  assert.ok(live.filter((f) => f.mimeType !== 'application/json').every((f) => (f.parents || []).includes(root.id)), what + ': Word nella cartella principale');
+};
 const appFiles = () => [...drive.files.values()].filter((f) => f.mimeType !== FOLDER && !f.trashed);
 const trashedFiles = () => [...drive.files.values()].filter((f) => f.trashed);
 // testo di un .docx (per controllare il contenuto davvero scritto su Drive)
@@ -197,7 +218,8 @@ try {
   await d1.getByLabel('Nome esercizio 1').fill('Fulmine');
   await d1.locator('.page-actions .status-pill', { hasText: 'Salvato su Drive ✓' }).waitFor({ timeout: 25000 });
   const sj = sessionJson(sid);
-  assert.ok(sj && sj.parents[0] === folder.id, 'file nella cartella Rugby Coach');
+  assert.ok(sj && sj.parents[0] === dataFolders()[0].id, '.json in "File per l\'app"');
+  assertLayout('D1');
   const nFiles = appFiles().length;
   await d1.getByLabel('Nome esercizio 2').fill('Palla quadrata');
   await d1.locator('.page-actions .status-pill', { hasText: 'Da salvare su Drive' }).waitFor({ timeout: 5000 });
@@ -343,6 +365,7 @@ try {
   await shot(d3, '34-telefono-impostazioni-collegato');
   await settle(d3, 4000);
   assert.equal(folders().length, 1, 'una sola cartella');
+  assertLayout('D3');
   const names = appFiles().map((f) => f.name);
   assert.equal(new Set(names).size, names.length, 'nessun duplicato su Drive: ' + names.join(' | '));
   assert.ok(!appFiles().some((f) => f.appProperties?.rcKind === 'plan'), 'il piano eliminato non è stato ricreato');
@@ -418,6 +441,7 @@ try {
   const aTombs = await A.evaluate(() => new Promise((res) => { const r = indexedDB.open('rugby-coach'); r.onsuccess = () => { const g = r.result.transaction('settings').objectStore('settings').get('tombstones'); g.onsuccess = () => res((g.result && g.result.value) || {}); }; }));
   assert.ok(!(aTombs.session || {})[sx], 'tombstone locale di A superata');
   assert.ok(!(index().tombstones.session || {})[sx]);
+  assertLayout('fine');
   const names2 = appFiles().map((f) => f.name);
   assert.equal(new Set(names2).size, names2.length, 'nessun duplicato su Drive: ' + names2.join(' | '));
   ok = true;

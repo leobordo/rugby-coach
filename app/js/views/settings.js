@@ -7,7 +7,7 @@ import * as sync from '../app-sync.js';
 import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES, MODULE_ORDER, sanitizeModules } from '../model.js';
 import { pageHeader } from './common.js';
 
-export const APP_VERSION = '1.4.1';
+export const APP_VERSION = '1.4.2';
 
 const folderUrl = (f) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(f.folderId);
 

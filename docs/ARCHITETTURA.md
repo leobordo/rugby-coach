@@ -46,6 +46,15 @@ app/
 - **Collegamento in un tocco** (`connectDrive`): accesso → `findOrCreateAppFolder` cerca una cartella con
   `appProperties rcApp=rugby-coach, rcKind=folder` (con `drive.file` l'app vede le cartelle che ha creato) e,
   se non c'è, crea "Rugby Coach" nella radice. Se la cartella esisteva, le schede vengono recuperate subito.
+- **"File per l'app"** (v1.4.2): i `.json` personali (backup delle schede, libreria, rosa, "Rugby Coach -
+  Eliminati.json") stanno nella sottocartella `Rugby Coach/File per l'app` (`appProperties rcKind=dataFolder`); nella
+  cartella principale restano solo i `.docx`. `findOrCreateDataFolder` la ritrova o la crea; se due telefoni l'hanno
+  creata insieme vince la più vecchia (createdTime, poi id) su tutti i telefoni, i file delle altre vengono spostati e
+  le altre vanno nel cestino; a ogni giro un controllo leggero (`files.get`) verifica che esista ancora.
+  Migrazione: `moveRootJson` SPOSTA i `.json` ancora nella cartella principale (`files.update addParents/removeParents`,
+  stesso id), una volta per avvio finché ne trova; idempotente, ripresa al giro dopo se interrotta, non blocca la coda.
+  Durante la transizione ricerca, ripristino, eliminazioni e controllo duplicati guardano entrambe le cartelle
+  (`listPersonal`; a parità di scheda vale il `.json` in "File per l'app"). I `.json` nuovi nascono nella sottocartella.
 - **Nessun duplicato**: ogni file ha `appProperties { rcApp, rcKind, rcId, rcVariant }`; il `.json` elenca gli id dei
   suoi `.docx`. Prima di creare un file la coda fa `files.list` nella cartella e aggiorna (PATCH) quelli esistenti.
 - **Esempi** con id stabili: creati su Drive solo se mancano, mai sovrascritti finché non modificati.
@@ -77,4 +86,6 @@ app/
 npm test        # node --test: modello, migrazioni, merge, Tactic Board, XSS, .docx (+ LibreOffice), Drive/coda con fetch finto, condivisione, PWA
 npm run e2e     # Playwright + Chrome: pagine, persistenza, Tactic Board, offline, Drive finto (collegamento in un tocco,
                 # cartella ritrovata, invito al rinnovo), Condividi con canShare finto, assenza di gergo; più dispositivi
+  e2e-datafolder.mjs   # "File per l'app": migrazione da 1.4.1 (due telefoni insieme, interrotta e ripresa,
+                       # eliminazione durante lo spostamento), telefono nuovo, nessun .json nella cartella principale
 ```

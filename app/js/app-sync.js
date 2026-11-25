@@ -1,7 +1,7 @@
 // Collega: repository locale + coda di sync + client Drive + login Google. Espone lo stato alla UI.
 import * as repo from './repo.js';
 import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKeyOfRemote } from './sync.js';
-import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder } from './drive.js';
+import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder, findOrCreateDataFolder, moveRootJson, moveFileQuietly } from './drive.js';
 import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
 import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup } from './model.js';
@@ -64,6 +64,8 @@ export async function initSync() {
     buildArtifacts: buildFor,
     getFolderId: async () => (await repo.getSetting('drive', null))?.folderId || null,
     isOnline: () => navigator.onLine,
+    getJsonFolderId: async () => (await repo.getSetting('drive', null))?.dataFolderId || null,
+    listRemote: () => listPersonal(),
     onChange: (e) => { if (e.status) statusMap.set(e.key, e.status); else statusMap.delete(e.key); repo.emit('sync-entry', e); },
   });
   for (const e of await syncStore.all()) statusMap.set(e.key, e.status);
@@ -189,7 +191,7 @@ async function mergeCollectionJson(kind, txt) {
 async function remoteVersion(kind, fileId) {
   try {
     const folder = await repo.getSetting('drive', null);
-    const files = await drive.listAppFiles(folder && folder.folderId, { mimeType: 'application/json', props: { rcId: COLLECTION_ID, rcKind: kind === 'library' ? 'exercise' : 'player' } });
+    const files = await listPersonal({ mimeType: 'application/json', props: { rcId: COLLECTION_ID, rcKind: kind === 'library' ? 'exercise' : 'player' } });
     const f = files.find((x) => x.id === fileId);
     return f && f.version != null ? String(f.version) : null;
   } catch (e) {
@@ -238,7 +240,7 @@ let pulledDeletions = false;
 async function pullRemoteDeletions() {
   const folder = await repo.getSetting('drive', null);
   if (!folder || !folder.folderId) return;
-  const files = await drive.listAppFiles(folder.folderId, { mimeType: 'application/json', props: { rcKind: 'tombstones', rcId: COLLECTION_ID } });
+  const files = await listPersonal({ mimeType: 'application/json', props: { rcKind: 'tombstones', rcId: COLLECTION_ID } });
   const f = files.find((x) => x.appProperties && x.appProperties.rcKind === 'tombstones');
   if (f) await mergeDeletedJson(await drive.download(f.id));
 }
@@ -256,6 +258,12 @@ export async function runNow({ force = false } = {}) {
   }
   state.running = true; repo.emit('sync-state', { ...state });
   try {
+    // "File per l'app" (ritrovata o creata) e spostamento dei vecchi .json dalla cartella principale
+    try { await prepareDataFolder(); } catch (e) {
+      console.warn(e);
+      if (e instanceof DriveAuthError) { state.needsAuth = true; return null; }
+      return null; // senza la sottocartella non si invia nulla: riprova al prossimo giro
+    }
     // indice delle eliminazioni: una volta per avvio e prima di ogni giro con schede da inviare
     // (così una scheda eliminata altrove più di recente non viene rimandata su Drive)
     const waiting = (await engine.pending()).some((e) => SHEET_KINDS.includes(e.kind) && !e.deleted);
@@ -337,13 +345,17 @@ export async function switchAccount() {
 
 async function setFolder(folder, { run = true } = {}) {
   const prev = await repo.getSetting('drive', null);
-  await repo.setSetting('drive', { folderId: folder.id, folderName: folder.name, account: state.account, chosenAt: new Date().toISOString() });
-  if (!prev || prev.folderId !== folder.id) {
+  const same = prev && prev.folderId === folder.id;
+  await repo.setSetting('drive', { folderId: folder.id, folderName: folder.name, account: state.account, chosenAt: new Date().toISOString(),
+    dataFolderId: same ? prev.dataFolderId || null : null });
+  if (!same) {
+    rootJsonChecked = false;
     await resetRemoteFiles();
     await markAllDirty();
   }
   await refreshState();
   if (run) {
+    await prepareDataFolder().catch((e) => console.warn(e));
     await checkRestoreHint(folder.id).catch(() => {});
     runNow({ force: true });
   }
@@ -357,6 +369,7 @@ export async function connectDrive() {
   if (!auth.getValidToken()) await signIn();
   const { folder, created } = await findOrCreateAppFolder(drive, DEFAULT_FOLDER_NAME, APP_ID);
   await setFolder(folder, { run: false });
+  await prepareDataFolder();
   let restored = null;
   if (!created) {
     try { restored = await restoreFromDrive(); } catch (e) { if (e instanceof DriveAuthError) throw e; console.warn('Recupero schede non riuscito', e); }
@@ -368,7 +381,7 @@ export async function connectDrive() {
 
 // Nuovo dispositivo: se la cartella contiene backup di schede che qui non ci sono, la home propone il ripristino
 async function checkRestoreHint(folderId) {
-  const files = await drive.listAppFiles(folderId, { mimeType: 'application/json' });
+  const files = await listPersonal({ mimeType: 'application/json' });
   let missing = 0;
   for (const f of files) {
     const key = localKeyOfRemote(f.appProperties);
@@ -427,7 +440,7 @@ export async function restoreFromDrive() {
   if (!auth.getValidToken()) await signIn();
   const folder = await repo.getSetting('drive', null);
   if (!folder || !folder.folderId) throw new Error('Scegli prima la cartella Drive.');
-  const all = await drive.listAppFiles(folder.folderId);
+  const all = await listPersonal();
   const index = buildRemoteIndex(all);
   const jsons = all.filter((f) => f.mimeType === 'application/json' && (f.appProperties || {}).rcVariant === 'json');
   const sum = { files: 0, inserted: 0, updated: 0, skipped: 0, errors: 0, deleted: 0 };
@@ -496,4 +509,40 @@ export function statusLabel(entry) {
     case SYNC_STATUS.ERROR: return { text: 'Non salvato su Drive', cls: 'error', title: 'Riprovo da solo tra poco' };
     default: return { text: 'Da salvare su Drive', cls: 'pending', title: state.needsAuth ? 'Tocca "Salva su Drive" per completare' : navigator.onLine ? 'Tra pochi secondi' : 'Senza rete: si salva quando torna la connessione' };
   }
+}
+
+// ----- "File per l'app": i .json stanno lì, nella cartella principale solo i documenti Word -----
+// Tutti i file dell'app di questo utente: cartella principale + "File per l'app" (durante la migrazione i .json
+// possono stare in entrambe: ricerca, ripristino, eliminazioni e controllo dei duplicati guardano in tutte e due).
+async function listPersonal(opts = {}) {
+  const f = await repo.getSetting('drive', null);
+  if (!f || !f.folderId) return [];
+  const lists = await Promise.all([drive.listAppFiles(f.folderId, opts), f.dataFolderId ? drive.listAppFiles(f.dataFolderId, opts) : []]);
+  const seen = new Set();
+  // prima quelli in "File per l'app": se per una scheda esistesse un .json in entrambe, vale quello
+  return [...lists[1], ...lists[0]].filter((x) => (seen.has(x.id) ? false : seen.add(x.id)));
+}
+
+let rootJsonChecked = false; // spostamento dei .json dalla cartella principale: una volta per avvio, finché serve
+// A ogni giro una sola files.list delle sottocartelle: la ritrova (anche se un altro telefono l'ha appena creata),
+// la crea se manca e unisce eventuali doppie.
+async function prepareDataFolder() {
+  const f = await repo.getSetting('drive', null);
+  if (!f || !f.folderId) return null;
+  const found = await findOrCreateDataFolder(drive, f.folderId, APP_ID);
+  if (f.dataFolderId && f.dataFolderId !== found.id) {
+    // un altro telefono l'aveva creata prima: i .json noti vengono portati in quella giusta
+    for (const e of await syncStore.all()) if (e.files && e.files.json) await moveFileQuietly(drive, e.files.json, found.id, f.dataFolderId);
+    rootJsonChecked = false;
+  }
+  const dataId = found.id;
+  if (dataId !== f.dataFolderId) await repo.setSetting('drive', { ...(await repo.getSetting('drive', null)), dataFolderId: dataId });
+  if (!rootJsonChecked) {
+    // interrotta (rete, errore di Drive)? non blocca il resto: si riprende al prossimo giro
+    try { await moveRootJson(drive, f.folderId, dataId, APP_ID); rootJsonChecked = true; } catch (e) {
+      if (e instanceof DriveAuthError) throw e;
+      console.warn('Spostamento in "File per l\'app" da riprendere', e);
+    }
+  }
+  return dataId;
 }

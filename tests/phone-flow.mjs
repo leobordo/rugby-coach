@@ -148,7 +148,11 @@ for (const [vpName, vp] of [['390', { width: 390, height: 844 }], ['360', { widt
     await page.getByText('Fatto!').waitFor({ timeout: 10000 });
     await shot('02-collegato'); await audit(page, 'collegato', vpName);
     const fld = [...drive.files.values()].filter((f) => f.mimeType === 'application/vnd.google-apps.folder');
-    check(vpName + ' cartella-creata-in-radice', fld.length === 1 && fld[0].name === 'Rugby Coach' && !fld[0].parents, JSON.stringify(fld));
+    // adattato (v1.4.2): oltre a "Rugby Coach" nella radice c'è la sua sottocartella "File per l'app" (file dell'app)
+    const rootF = fld.filter((f) => !f.parents);
+    const subF = fld.filter((f) => f.parents);
+    check(vpName + ' cartella-creata-in-radice', rootF.length === 1 && rootF[0].name === 'Rugby Coach'
+      && subF.length === 1 && subF[0].name === "File per l'app" && subF[0].parents[0] === rootF[0].id, JSON.stringify(fld));
     const g = await page.evaluate(() => window.__gis);
     check(vpName + ' gis-scope+primo-prompt', g.inits.every((i) => i.scope === 'https://www.googleapis.com/auth/drive.file') && g.requests.at(-1).prompt === 'consent' || g.requests.at(-1).prompt === '', JSON.stringify(g.requests));
     check(vpName + ' gis-solo-da-gesto', g.requests.every((r) => r.active === true), JSON.stringify(g.requests.map((r) => r.active)));

@@ -64,6 +64,10 @@ export function defaultBackoff(attempts) {
 export function createSyncEngine({
   store, getRecord, buildArtifacts, drive, getFolderId,
   isOnline = () => true, now = () => Date.now(), onChange = () => {}, backoff = defaultBackoff,
+  // cartella dei .json ("File per l'app" dentro "Rugby Coach"); senza: la stessa dei documenti
+  getJsonFolderId = null,
+  // file dell'app da considerare (cartella principale + "File per l'app"); senza: solo la cartella
+  listRemote = null,
 }) {
   let running = null;
 
@@ -192,7 +196,7 @@ export function createSyncEngine({
           // documenti non più prodotti (es. il vecchio .docx dell'osservazione, ora unito): nel cestino
           for (const k of Object.keys(files)) if (!keys.has(k) && files[k]) { await drive.trashFile(files[k]); delete files[k]; delete links[k]; }
         }
-        const res = await uploadArtifact(entry, art, folderId, files);
+        const res = await uploadArtifact(entry, art, art.key === 'json' ? ctx.jsonFolderId : folderId, files);
         files[art.key] = res.id;
         if (res.webViewLink) links[art.key] = res.webViewLink;
       }
@@ -219,6 +223,8 @@ export function createSyncEngine({
     if (!isOnline()) { summary.skipped = 'offline'; return summary; }
     const folderId = await getFolderId();
     if (!folderId) { summary.skipped = 'nofolder'; return summary; }
+    const jsonFolderId = getJsonFolderId ? await getJsonFolderId() : folderId;
+    if (!jsonFolderId) { summary.skipped = 'nofolder'; return summary; }
     const all = await pending();
     const t = now();
     const todo = all.filter((e) => force || e.status !== SYNC_STATUS.ERROR || (e.nextAttemptAt || 0) <= t)
@@ -226,9 +232,10 @@ export function createSyncEngine({
     // una sola files.list per giro, e solo se serve
     let idx = null;
     const ctx = {
+      jsonFolderId,
       remoteIndex: () => {
         if (!idx) {
-          idx = (drive.listAppFiles ? drive.listAppFiles(folderId) : Promise.resolve([])).then(buildRemoteIndex);
+          idx = (listRemote ? listRemote(folderId) : drive.listAppFiles ? drive.listAppFiles(folderId) : Promise.resolve([])).then(buildRemoteIndex);
           idx.catch(() => { idx = null; });
         }
         return idx;

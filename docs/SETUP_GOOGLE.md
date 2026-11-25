@@ -80,6 +80,8 @@ crea una **chiave API** limitata ai siti `https://leobordo.github.io/*`, `http:/
 - Accesso con Google Identity Services (token model, nessun server); il permesso dura circa un'ora ed è conservato
   sul dispositivo. Quando scade e c'è qualcosa da salvare, l'app mostra "Tocca per salvare su Drive" (o lo
   rinnova toccando "Fine allenamento"): la finestra di Google si chiude da sola.
+- Dentro "Rugby Coach" l'app crea la sottocartella "File per l'app" (`rcKind=dataFolder`) per i suoi file `.json`;
+  nella cartella principale restano solo i documenti Word. Nessun permesso aggiuntivo: tutto resta in `drive.file`.
 - La cartella "Rugby Coach" ha `appProperties` `rcApp=rugby-coach, rcKind=folder`: su un nuovo telefono viene
   ritrovata e le schede recuperate in automatico. I file hanno etichette con il codice della scheda e vengono
   aggiornati, mai duplicati. Dettagli in [ARCHITETTURA.md](ARCHITETTURA.md).

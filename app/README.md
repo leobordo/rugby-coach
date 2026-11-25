@@ -48,6 +48,15 @@ Accanto a ogni scheda vedi a che punto è:
 Se compare il pulsante giallo **Tocca per salvare su Drive**, toccalo: si apre un attimo la finestra di Google e
 le schede vengono salvate. Succede quando l'app è rimasta chiusa per un po'. Anche **✓ Fine allenamento** salva tutto.
 
+## Cosa trovi su Drive
+
+- Nella cartella **Rugby Coach** ci sono i **documenti Word** delle tue schede (allenamenti, partite, piani,
+  libreria esercizi): puoi aprirli, stamparli e mandarli a chi vuoi.
+- Dentro c'è anche la cartella **File per l'app**: contiene le copie che servono all'app per recuperare tutto su un
+  nuovo telefono (schede, libreria, rosa, schede eliminate). **Non aprirla e non modificarla**: è dell'app.
+- Se usavi una versione precedente, l'app sposta da sola quei file in **File per l'app** la prima volta che si
+  collega (sono gli stessi file, non copie).
+
 ## Condividere una scheda
 
 1. Apri la scheda (allenamento, partita o piano) oppure la **Libreria**.

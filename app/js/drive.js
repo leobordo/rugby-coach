@@ -103,11 +103,23 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       return folderId ? files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(folderId)) : files;
     },
 
-    // Cartelle create dall'app (appProperties rcKind=folder), dalla più vecchia
-    async listAppFolders({ appId = 'rugby-coach' } = {}) {
-      const query = `mimeType='${FOLDER_MIME}' and appProperties has { key='rcApp' and value='${qEsc(appId)}' } and appProperties has { key='rcKind' and value='folder' } and trashed=false`;
-      const files = await listAll(query, 'files(id,name,createdTime,appProperties)');
-      return files.sort((a, b) => String(a.createdTime || '').localeCompare(String(b.createdTime || '')));
+    // Cartelle create dall'app (appProperties rcKind=folder | dataFolder), dalla più vecchia
+    async listAppFolders({ appId = 'rugby-coach', kind = 'folder', parentId } = {}) {
+      let query = `mimeType='${FOLDER_MIME}' and appProperties has { key='rcApp' and value='${qEsc(appId)}' } and appProperties has { key='rcKind' and value='${qEsc(kind)}' } and trashed=false`;
+      if (parentId) query = `'${qEsc(parentId)}' in parents and ` + query;
+      let files = await listAll(query, 'files(id,name,createdTime,parents,appProperties)');
+      if (parentId) files = files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(parentId));
+      return files.sort((a, b) => String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || String(a.id).localeCompare(String(b.id)));
+    },
+
+    // Sposta un file in un'altra cartella: STESSO file e stesso id (files.update addParents/removeParents)
+    async moveFile(id, { addParents, removeParents }) {
+      const params = { fields: 'id,parents,trashed' };
+      if (addParents) params.addParents = addParents;
+      if (removeParents) params.removeParents = removeParents;
+      return request('PATCH', `${apiBase}/files/${encodeURIComponent(id)}?${q(params)}`, {
+        body: '{}', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      });
     },
 
     async download(id) {
@@ -170,4 +182,46 @@ export async function findOrCreateAppFolder(drive, name = 'Rugby Coach', appId =
   if (found.length) return { folder: { id: found[0].id, name: found[0].name }, created: false };
   const f = await drive.createFolder(name, { appProperties: { rcApp: appId, rcKind: 'folder' } });
   return { folder: { id: f.id, name: f.name || name }, created: true };
+}
+
+// Sottocartella "File per l'app" dentro "Rugby Coach": qui stanno i file .json che servono all'app (copie per il
+// recupero, libreria, rosa, schede eliminate); nella cartella principale restano solo i documenti Word.
+// Ritrovata se esiste già; se due telefoni l'hanno creata insieme vince la più vecchia (stesso criterio su tutti
+// i telefoni: data di creazione, poi id), i file delle altre vengono spostati lì e le altre vanno nel cestino.
+export const DATA_FOLDER_NAME = 'File per l\'app';
+export async function findOrCreateDataFolder(drive, parentId, appId = 'rugby-coach') {
+  let found = await drive.listAppFolders({ appId, kind: 'dataFolder', parentId });
+  let createdId = null;
+  if (!found.length) {
+    const f = await drive.createFolder(DATA_FOLDER_NAME, { parentId, appProperties: { rcApp: appId, rcKind: 'dataFolder' } });
+    createdId = f.id;
+    found = await drive.listAppFolders({ appId, kind: 'dataFolder', parentId });
+    if (!found.some((x) => x.id === f.id)) found = [...found, { id: f.id, name: f.name || DATA_FOLDER_NAME }];
+  }
+  const [winner, ...extra] = found;
+  for (const x of extra) {
+    for (const f of await drive.listAppFiles(x.id)) await moveFileQuietly(drive, f.id, winner.id, x.id);
+    await drive.trashFile(x.id);
+  }
+  return { id: winner.id, name: winner.name || DATA_FOLDER_NAME, created: winner.id === createdId };
+}
+
+// Migrazione: i .json dell'app ancora nella cartella principale vengono SPOSTATI in "File per l'app".
+// Idempotente (si cercano solo quelli ancora lì) e sicura se interrotta: al giro dopo si riprende.
+export async function moveRootJson(drive, folderId, dataFolderId, appId = 'rugby-coach') {
+  const root = await drive.listAppFiles(folderId, { appId, mimeType: JSON_MIME });
+  let moved = 0;
+  for (const f of root) if (await moveFileQuietly(drive, f.id, dataFolderId, folderId)) moved++;
+  return { moved, found: root.length };
+}
+
+export async function moveFileQuietly(drive, id, to, from) {
+  try {
+    await drive.moveFile(id, { addParents: to, removeParents: from });
+    return true;
+  } catch (e) {
+    // già spostato da un altro telefono o eliminato nel frattempo: niente da fare
+    if (e instanceof DriveHttpError && (e.status === 404 || e.status === 400 || e.status === 403)) return false;
+    throw e;
+  }
 }
