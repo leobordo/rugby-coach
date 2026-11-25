@@ -43,13 +43,24 @@ function fakeDrive({ failWith } = {}) {
       files.set(fid, { id: fid, ...meta, content, version: 1 });
       return json(200, { id: fid, name: meta.name, webViewLink: 'https://drive/' + fid });
     }
+    if (opts.method === 'PATCH' && !upload && id) {
+      assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
+      const f = files.get(id);
+      if (!f) return json(404, { error: { message: 'File not found: ' + id } });
+      Object.assign(f, JSON.parse(opts.body));
+      state.trashed = (state.trashed || 0) + 1;
+      return json(200, { id, trashed: f.trashed });
+    }
     if (opts.method === 'PATCH' && upload) {
       if (!files.has(id)) return json(404, { error: { message: 'File not found: ' + id } });
       const { meta, content } = await parseMultipart(opts.body, opts.headers['Content-Type']);
       assert.ok(!meta.parents, 'PATCH non deve mandare parents');
       const f = files.get(id);
-      Object.assign(f, meta, { content, version: f.version + 1 });
-      return json(200, { id, name: f.name });
+      // come Drive: un aggiornamento senza trashed:false lascia il file nel cestino
+      const { trashed: wantTrashed, ...rest } = meta;
+      Object.assign(f, rest, { content, version: f.version + 1 });
+      if (wantTrashed === false && !state.ignoreUntrash) f.trashed = false;
+      return json(200, { id, name: f.name, trashed: !!f.trashed });
     }
     if (opts.method === 'GET' && !id && !upload) {
       assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
@@ -58,7 +69,7 @@ function fakeDrive({ failWith } = {}) {
       const parent = /'([^']+)' in parents/.exec(q)?.[1];
       const props = [...q.matchAll(/appProperties has \{ key='(\w+)' and value='([^']*)' \}/g)];
       const mime = /mimeType='([^']+)'/.exec(q)?.[1];
-      const list = [...files.values()].filter((f) => f.appProperties && props.every(([, k, v]) => f.appProperties[k] === v)
+      const list = [...files.values()].filter((f) => !f.trashed && f.appProperties && props.every(([, k, v]) => f.appProperties[k] === v)
         && (!parent || (f.parents || []).includes(parent)) && (!mime || f.mimeType === mime));
       state.lists = (state.lists || 0) + 1;
       return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, createdTime: f.createdTime, appProperties: f.appProperties })) });
@@ -340,4 +351,96 @@ test('collegamento in un tocco: crea "Rugby Coach" nella radice la prima volta, 
   // se per qualche motivo ce ne sono due, si usa la più vecchia
   fd.files.set('zz', { id: 'zz', name: 'Rugby Coach', mimeType: FOLDER_MIME, createdTime: '2030-01-01T00:00:00Z', appProperties: { rcApp: 'rugby-coach', rcKind: 'folder' } });
   assert.equal((await findOrCreateAppFolder(drive)).folder.id, a.folder.id);
+});
+
+test('eliminazione di una scheda: offline resta in coda; poi tutti i suoi file vanno nel CESTINO di Drive (404 = fatto)', async () => {
+  const { fd, engine, records } = setup();
+  records.set('session:s', { date: 'd', text: '1' });
+  await engine.markDirty('session', 's');
+  await engine.processQueue();
+  const ids = (await engine.getStatus('session', 's')).files;
+  assert.ok(ids['docx-plan'] && ids.json);
+  records.delete('session:s');
+  fd.state.online = false;
+  await engine.markDeleted('session', 's');
+  let sum = await engine.processQueue();
+  assert.equal(sum.skipped, 'offline');
+  assert.equal((await engine.getStatus('session', 's')).deleted, true, 'in coda');
+  assert.ok(Object.values(ids).every((id) => !fd.files.get(id).trashed));
+  fd.state.online = true;
+  fd.files.delete(ids.json); // un file già sparito: non è un errore
+  sum = await engine.processQueue();
+  assert.equal(sum.errors, 0);
+  assert.equal(fd.files.get(ids['docx-plan']).trashed, true, 'docx nel cestino (non cancellato)');
+  assert.equal(await engine.getStatus('session', 's'), undefined, 'voce tolta dalla coda');
+});
+
+test('eliminazione su un telefono che non conosce gli id: i file vengono ritrovati dalle etichette e cestinati', async () => {
+  const { fd, engine, records, store } = setup();
+  records.set('plan:p', { date: 'd', text: 'piano' });
+  await engine.markDirty('plan', 'p');
+  await engine.processQueue();
+  const ids = Object.values((await engine.getStatus('plan', 'p')).files);
+  await store.delete('plan:p'); // altro telefono: nessun id noto
+  records.delete('plan:p');
+  await engine.markDeleted('plan', 'p');
+  await engine.processQueue();
+  assert.ok(ids.every((id) => fd.files.get(id).trashed));
+});
+
+test('documento non più prodotto (vecchio .docx dell\'osservazione) va nel cestino, il .json non lo elenca più', async () => {
+  const { fd, records } = setup();
+  let two = true;
+  records.set('session:x', { date: 'd', text: 'a' });
+  // il primo giro produce due docx (come la versione 1.3), il secondo uno solo
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  const store = memStore();
+  const eng = createSyncEngine({
+    store, drive, getRecord: async (k, id) => records.get(k + ':' + id), getFolderId: async () => 'folder1',
+    buildArtifacts: async (kind, rec) => [
+      { key: 'docx-plan', name: 'A.docx', mimeType: DOCX_MIME, data: 'P' },
+      ...(two ? [{ key: 'docx-observation', name: 'B.docx', mimeType: DOCX_MIME, data: 'O' }] : []),
+      { key: 'json', name: 'A.json', mimeType: 'application/json', data: '{}' },
+    ],
+  });
+  await eng.markDirty('session', 'x');
+  await eng.processQueue();
+  const first = (await eng.getStatus('session', 'x')).files;
+  assert.ok(first['docx-observation']);
+  two = false;
+  await eng.markDirty('session', 'x');
+  await eng.processQueue();
+  const st = await eng.getStatus('session', 'x');
+  assert.equal(st.files['docx-observation'], undefined);
+  assert.equal(fd.files.get(first['docx-observation']).trashed, true);
+  assert.equal(fd.files.get(st.files.json).appProperties['rcF_docx-observation'], undefined);
+});
+
+test('A elimina, B (che conosce i file) modifica DOPO: il PATCH toglie dal cestino TUTTI i file della scheda', async () => {
+  const { fd, engine, records } = setup();
+  records.set('session:c', { date: 'd', text: 'v1' });
+  await engine.markDirty('session', 'c');
+  await engine.processQueue();
+  const ids = (await engine.getStatus('session', 'c')).files;
+  for (const id of Object.values(ids)) fd.files.get(id).trashed = true; // A li ha messi nel cestino
+  records.set('session:c', { date: 'd', text: 'v2 di B' });
+  await engine.markDirty('session', 'c');
+  const sum = await engine.processQueue();
+  assert.equal(sum.synced, 1);
+  for (const id of Object.values(ids)) assert.equal(fd.files.get(id).trashed, false, 'fuori dal cestino: ' + id);
+  assert.equal(fd.files.get(ids['docx-plan']).content, 'DOCX:v2 di B');
+  assert.equal([...fd.files.values()].filter((f) => f.appProperties && !f.trashed).length, 2, 'nessun duplicato');
+});
+
+test('drive client: se Drive lascia il file nel cestino dopo il PATCH, lo toglie con un secondo aggiornamento', async () => {
+  const fd = fakeDrive();
+  fd.state.ignoreUntrash = true;
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('folder1', { id: 'folder1', mimeType: FOLDER_MIME, name: 'Rugby Coach' });
+  const f = await drive.uploadFile({ name: 'a.docx', mimeType: DOCX_MIME, parents: ['folder1'], data: 'x' });
+  fd.files.get(f.id).trashed = true;
+  const res = await drive.uploadFile({ fileId: f.id, name: 'a.docx', mimeType: DOCX_MIME, data: 'y', untrash: true });
+  assert.equal(res.trashed, false);
+  assert.equal(fd.files.get(f.id).trashed, false);
+  assert.ok(fd.calls.some((c) => c.method === 'PATCH' && !c.path.startsWith('/upload/') && c.path.endsWith('/files/' + f.id)));
 });

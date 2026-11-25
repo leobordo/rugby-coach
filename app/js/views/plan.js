@@ -3,9 +3,9 @@ import { h, clear, textInput, textArea, rowControls, confirmDialog, toast } from
 import * as repo from '../repo.js';
 import {
   CATEGORIES, BLOCK_TYPES, newBlock, templatePlanSession, newPlanSession, moveItem, removeItem, ordinalRoman,
-  sessionFromPlanSession, findExerciseByName, deepClone, uid,
+  sessionFromPlanSession, findExerciseByName, deepClone, uid, sanitizeModules,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, finishButton } from './common.js';
+import { autosaver, pageHeader, docActions, finishButton, openPrepared } from './common.js';
 
 export async function planView(root, { id }) {
   const p = await repo.get('plan', id);
@@ -58,7 +58,7 @@ export async function planView(root, { id }) {
     ps.blocks.forEach((b, bi) => blocks.append(blockRow(ps, b, bi)));
     const addBtns = h('div.add-blocks', h('span.hint', 'Aggiungi:'),
       ...Object.entries(BLOCK_TYPES).map(([t, def]) => h('button.btn.small', { type: 'button', on: { click: () => {
-        ps.blocks.push(newBlock(t, t === 'RISCALDAMENTO' ? { subItems: [''] } : {})); changed(); rerender();
+        ps.blocks.push(newBlock(t)); changed(); rerender();
       } } }, def.label)));
     return h('article.plan-session',
       h('header.ps-head',
@@ -85,7 +85,6 @@ export async function planView(root, { id }) {
       const old = BLOCK_TYPES[b.type];
       b.type = typeSel.value;
       if (!b.title || b.title === old.defaultTitle) b.title = BLOCK_TYPES[b.type].defaultTitle;
-      if (b.type === 'RISCALDAMENTO' && !b.subItems.length) b.subItems.push('');
       changed(); rerender();
     });
     const titleIn = textInput(b, 'title', () => {
@@ -116,10 +115,11 @@ export async function planView(root, { id }) {
   async function createSheet(si) {
     saver.flush();
     const exs = await repo.list('exercise');
-    const s = sessionFromPlanSession(p, si, exs);
+    const prefs = (await repo.getSetting('prefs', {})) || {};
+    const s = sessionFromPlanSession(p, si, exs, prefs.defaultModules ? { modules: sanitizeModules(prefs.defaultModules) } : {});
     await repo.save(s);
     toast(`Foglio allenamento creato dall'allenamento ${ordinalRoman(si + 1)}.`, 'ok');
-    location.hash = `#/seduta/${s.id}/foglio`;
+    await openPrepared(`#/seduta/${s.id}/foglio`);
   }
 
   render();

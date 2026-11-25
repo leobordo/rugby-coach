@@ -4,7 +4,7 @@ import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKe
 import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder } from './drive.js';
 import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
-import { SYNCABLE_KINDS, APP_ID } from './model.js';
+import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup } from './model.js';
 import { debounce } from './ui.js';
 
 export const DEFAULT_FOLDER_NAME = 'Rugby Coach';
@@ -70,8 +70,11 @@ export async function initSync() {
   repo.setSyncHooks({
     onDirty: async (kind, id) => { await engine.markDirty(kind, id); schedule(); },
     onForget: (kind, id) => engine.forget(kind, id),
+    // scheda eliminata: i suoi file su Drive vanno nel cestino (anche più tardi, se ora non c'è rete)
+    onDelete: async (kind, id) => { await engine.markDeleted(kind, id); await engine.markDirty('deleted', COLLECTION_ID); schedule(); },
   });
   await refreshState();
+  await requeueMigrated();
   window.addEventListener('online', () => { runNow(); if (state.configured && state.folder) auth.preload(); });
   setInterval(() => { if (navigator.onLine) runNow(); }, 60e3);
   // Drive collegato: lo script di accesso Google viene preparato subito (così il tocco "Salva su Drive" funziona
@@ -80,7 +83,41 @@ export async function initSync() {
   setTimeout(runNow, 2500);
 }
 
+// Dopo un aggiornamento dello schema (es. v1.3 -> v1.4, seduta a sezioni): UNA volta, tutte le schede migrate
+// tornano in coda, così su Drive il .docx principale è rigenerato nel nuovo formato (stesso file, nessun
+// duplicato) e il vecchio .docx dell'osservazione finisce nel cestino, anche per le schede mai riaperte.
+// Drive non collegato: niente da fare ora, alla prima connessione tutte le schede vengono comunque inviate.
+async function requeueMigrated() {
+  const meta = (await repo.getSetting('meta', {})) || {};
+  if (meta.requeuedSchema === SCHEMA_VERSION) return;
+  if (state.folder) {
+    for (const kind of SYNCABLE_KINDS) {
+      for (const raw of await repo.list(kind)) {
+        if (raw.schemaVersion === SCHEMA_VERSION) continue;
+        const rec = await repo.get(kind, raw.id); // migrata
+        await repo.save(rec, { touch: false, sync: false });
+        await engine.markDirty(kind, rec.id);
+      }
+    }
+  }
+  await repo.setSetting('meta', { ...meta, requeuedSchema: SCHEMA_VERSION });
+}
+
+const SHEET_KINDS = ['session', 'match', 'plan'];
+async function sheetTombstones() {
+  const out = {};
+  for (const k of SHEET_KINDS) out[k] = await repo.getTombstones(k);
+  return out;
+}
+
 async function collectionRecord(kind) {
+  if (kind === 'deleted') {
+    const tombstones = await sheetTombstones();
+    const alive = await getRevived();
+    const none = SHEET_KINDS.every((k) => !Object.keys(tombstones[k]).length && !Object.keys(alive[k] || {}).length);
+    // mai "esempio": va sempre unito con l'indice remoto (così si scoprono le eliminazioni fatte altrove)
+    return { kind, id: COLLECTION_ID, tombstones, alive, example: false, placeholder: none };
+  }
   const dataKind = kind === 'library' ? 'exercise' : 'player';
   const items = (await repo.list(dataKind)).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it'));
   const tombstones = await repo.getTombstones(dataKind);
@@ -93,8 +130,49 @@ async function collectionRecord(kind) {
 }
 
 async function getRecord(kind, id) {
-  if (kind === 'library' || kind === 'roster') return collectionRecord(kind);
+  if (kind === 'library' || kind === 'roster' || kind === 'deleted') return collectionRecord(kind);
   return repo.get(kind, id);
+}
+
+// Schede eliminate altrove ma poi modificate di nuovo: { kind: { id: updatedAt della modifica che ha vinto } }.
+// Viaggiano nell'indice "Eliminati" accanto alle tombstone: una tombstone con data <= di questa è superata
+// (vale anche sui telefoni che la scheda non l'hanno, così la tombstone non torna).
+async function getRevived() { return (await repo.getSetting('revived', {})) || {}; }
+
+// Unisce l'indice remoto delle schede eliminate. Regola: vince l'evento più recente.
+// - eliminazione più recente della versione locale -> la scheda si toglie anche qui (e non viene rimandata);
+// - scheda modificata qui DOPO l'eliminazione -> la modifica vince: la tombstone è superata ("alive"),
+//   la scheda torna in coda e al prossimo invio i suoi file escono dal cestino di Drive.
+async function mergeDeletedJson(txt, { fromUpload = false } = {}) {
+  const obj = JSON.parse(txt);
+  if (!obj || obj.app !== APP_ID) throw new Error('Indice eliminati non valido');
+  const remote = obj.tombstones || {};
+  const remoteAlive = obj.alive || {};
+  const revived = await getRevived();
+  let changed = false;
+  let indexChanged = false;
+  for (const k of SHEET_KINDS) {
+    const local = await repo.getTombstones(k);
+    const all = { ...local, ...(remote[k] || {}) };
+    const updated = {};
+    for (const id of Object.keys(all)) { const rec = await repo.get(k, id); if (rec) updated[id] = rec.updatedAt || EPOCH; }
+    const res = resolveDeletions({ localTombs: local, remoteTombs: remote[k] || {}, localAlive: revived[k] || {}, remoteAlive: remoteAlive[k] || {},
+      updatedOf: (id) => (id in updated ? updated[id] : null) });
+    for (const id of res.remove) { await repo.removeLocalOnly(k, id); changed = true; }
+    // modificate qui dopo l'eliminazione: la modifica vince, tornano in coda (i file escono dal cestino)
+    for (const id of res.revive) { indexChanged = true; if (engine) await engine.markDirty(k, id); }
+    if (JSON.stringify(res.tombs) !== JSON.stringify(local)) await repo.setTombstones(k, res.tombs);
+    revived[k] = res.alive;
+  }
+  await repo.setSetting('revived', revived);
+  if (indexChanged && engine && !fromUpload) { await engine.markDirty('deleted', COLLECTION_ID); schedule(); }
+  if (changed) repo.emit('imported', {});
+  return changed;
+}
+
+async function isTombstoned(kind, rec) {
+  const at = (await repo.getTombstones(kind))[rec.id];
+  return !!at && (Date.parse(at) || 0) >= (Date.parse(rec.updatedAt) || 0);
 }
 
 // Unisce in locale il .json remoto di una raccolta (elemento per elemento, con tombstone)
@@ -127,8 +205,14 @@ async function buildFor(kind, rec, ctx = {}) {
   // (altro dispositivo), si ripete. Resta una piccola finestra tra il controllo e il PATCH: Drive v3 non offre
   // aggiornamenti condizionati (If-Match) sugli upload; l'elemento perso riappare comunque al giro successivo
   // del dispositivo che lo possiede, perché il suo merge lo rimanda.
-  const remoteId = (kind === 'library' || kind === 'roster') && ((ctx.known && ctx.known.json) || (ctx.remote && ctx.remote.json));
-  if (remoteId) {
+  const remoteId = (kind === 'library' || kind === 'roster' || kind === 'deleted') && ((ctx.known && ctx.known.json) || (ctx.remote && ctx.remote.json));
+  if (kind === 'deleted') {
+    if (remoteId) {
+      try { await mergeDeletedJson(await drive.download(remoteId), { fromUpload: true }); } catch (e) { if (e instanceof DriveAuthError || e instanceof DriveOfflineError) throw e; console.warn(e); }
+      rec = await collectionRecord(kind);
+    }
+    if (rec.placeholder) return []; // nessuna eliminazione: nessun file
+  } else if (remoteId) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const v0 = await remoteVersion(kind, remoteId);
       try {
@@ -148,6 +232,17 @@ async function buildFor(kind, rec, ctx = {}) {
 
 const schedule = debounce(() => runNow(), 4000);
 
+// Con accesso valido: si legge l'indice delle schede eliminate da altri telefoni e si tolgono anche qui
+// (se l'eliminazione è più recente), così non vengono rimandate su Drive. Una sola lettura, fuori dalla coda.
+let pulledDeletions = false;
+async function pullRemoteDeletions() {
+  const folder = await repo.getSetting('drive', null);
+  if (!folder || !folder.folderId) return;
+  const files = await drive.listAppFiles(folder.folderId, { mimeType: 'application/json', props: { rcKind: 'tombstones', rcId: COLLECTION_ID } });
+  const f = files.find((x) => x.appProperties && x.appProperties.rcKind === 'tombstones');
+  if (f) await mergeDeletedJson(await drive.download(f.id));
+}
+
 export async function runNow({ force = false } = {}) {
   if (!engine) return null;
   const prefs = await repo.getSetting('prefs', { autoSync: true }) || { autoSync: true };
@@ -161,6 +256,20 @@ export async function runNow({ force = false } = {}) {
   }
   state.running = true; repo.emit('sync-state', { ...state });
   try {
+    // indice delle eliminazioni: una volta per avvio e prima di ogni giro con schede da inviare
+    // (così una scheda eliminata altrove più di recente non viene rimandata su Drive)
+    const waiting = (await engine.pending()).some((e) => SHEET_KINDS.includes(e.kind) && !e.deleted);
+    if (!pulledDeletions || waiting) {
+      try {
+        await pullRemoteDeletions();
+        pulledDeletions = true;
+      } catch (e) {
+        pulledDeletions = false;
+        console.warn(e);
+        if (e instanceof DriveAuthError) { state.needsAuth = true; return null; }
+        if (waiting) return null; // senza l'indice non si rischia di rimandare una scheda eliminata: riprova tra poco
+      }
+    }
     const sum = await engine.processQueue({ force });
     state.needsAuth = !!sum.needsAuth;
     state.lastRun = { at: Date.now(), ...sum };
@@ -265,7 +374,8 @@ async function checkRestoreHint(folderId) {
     const key = localKeyOfRemote(f.appProperties);
     if (!key) continue;
     const [kind, id] = key.split(':');
-    if (kind === 'library' || kind === 'roster') continue;
+    if (kind === 'library' || kind === 'roster' || kind === 'deleted') continue;
+    if ((await repo.getTombstones(kind))[id]) continue;
     if (!(await repo.get(kind, id))) missing++;
   }
   await repo.setSetting('restoreHint', missing ? { folderId, count: missing } : null);
@@ -295,6 +405,7 @@ export async function markAllDirty() {
   for (const kind of SYNCABLE_KINDS) for (const r of await repo.list(kind)) await engine.markDirty(kind, r.id);
   await engine.markDirty('library', COLLECTION_ID);
   await engine.markDirty('roster', COLLECTION_ID);
+  await engine.markDirty('deleted', COLLECTION_ID);
   schedule();
 }
 
@@ -319,8 +430,14 @@ export async function restoreFromDrive() {
   const all = await drive.listAppFiles(folder.folderId);
   const index = buildRemoteIndex(all);
   const jsons = all.filter((f) => f.mimeType === 'application/json' && (f.appProperties || {}).rcVariant === 'json');
-  const sum = { files: 0, inserted: 0, updated: 0, skipped: 0, errors: 0 };
+  const sum = { files: 0, inserted: 0, updated: 0, skipped: 0, errors: 0, deleted: 0 };
+  // prima l'indice delle schede eliminate: quelle schede non devono tornare
+  const delFile = jsons.find((f) => localKeyOfRemote(f.appProperties) === 'deleted:' + COLLECTION_ID);
+  if (delFile) {
+    try { await mergeDeletedJson(await drive.download(delFile.id)); await engine.adopt('deleted', COLLECTION_ID, index.get('deleted:' + COLLECTION_ID) || { json: delFile.id }, { folderId: folder.folderId }); } catch (e) { if (e instanceof DriveAuthError) throw e; sum.errors++; }
+  }
   for (const f of jsons) {
+    if (f === delFile) continue;
     try {
       const key = localKeyOfRemote(f.appProperties);
       const [kind, id] = key.split(':');
@@ -332,7 +449,17 @@ export async function restoreFromDrive() {
         sum.files++; sum.inserted += m.upserts.length;
         pending = m.remoteChanged;
       } else {
-        const r = await repo.importBackup(txt, { sync: false });
+        const recs = parseBackup(txt);
+        const keep = [];
+        for (const r of recs) if (!(await isTombstoned(r.kind, r))) keep.push(r);
+        if (!keep.length) {
+          // eliminata su un altro telefono: non si recupera; i suoi file vanno nel cestino
+          await engine.adopt(kind, id, index.get(key) || { json: f.id }, { folderId: folder.folderId });
+          await engine.markDeleted(kind, id);
+          sum.deleted++;
+          continue;
+        }
+        const r = await repo.importBackup(buildRecordBackup(keep[0]), { sync: false });
         sum.files++; sum.inserted += r.inserted; sum.updated += r.updated; sum.skipped += r.skipped;
         pending = r.items.some((x) => x.localNewer);
       }

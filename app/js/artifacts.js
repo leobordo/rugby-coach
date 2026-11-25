@@ -1,7 +1,7 @@
 // Costruisce i file da salvare su Drive per un record: uno o due .docx + un .json di backup.
 import { createBuilder, docVariants, buildDocument } from './docx-build.js';
 import { DOCX_MIME, JSON_MIME } from './drive.js';
-import { fileBaseName, buildRecordBackup, buildBackup, observationHasContent } from './model.js';
+import { fileBaseName, buildRecordBackup, buildBackup } from './model.js';
 
 let docxPromise = null;
 export function loadDocx(url = new URL('../vendor/docx.mjs', import.meta.url).href) {
@@ -17,7 +17,7 @@ export async function packDocument(docx, document) {
 
 export async function buildDocxFiles(docx, rec, ctx = {}) {
   const builder = createBuilder(docx, ctx);
-  const variants = docVariants(rec, rec.kind === 'session' ? observationHasContent(rec) : false);
+  const variants = docVariants(rec);
   const out = [];
   for (const v of variants) {
     const document = buildDocument(builder, rec, v);
@@ -32,7 +32,8 @@ export async function buildDocxFiles(docx, rec, ctx = {}) {
 export function buildJsonFile(rec) {
   // raccolte (libreria, rosa): backup completo ri-importabile con "Importa backup" o "Ripristina da Drive"
   // le raccolte portano anche le cancellazioni (tombstone) per il merge tra dispositivi
-  const payload = rec.kind === 'library' ? { ...buildBackup({ exercises: rec.exercises }), tombstones: { exercise: rec.tombstones || {} } }
+  const payload = rec.kind === 'deleted' ? { app: 'rugby-coach', type: 'tombstones', schemaVersion: 3, exportedAt: new Date().toISOString(), tombstones: rec.tombstones || {}, alive: rec.alive || {} }
+    : rec.kind === 'library' ? { ...buildBackup({ exercises: rec.exercises }), tombstones: { exercise: rec.tombstones || {} } }
     : rec.kind === 'roster' ? { ...buildBackup({ players: rec.players }), tombstones: { player: rec.tombstones || {} } } : buildRecordBackup(rec);
   const json = JSON.stringify(payload, null, 2);
   return { key: 'json', name: fileBaseName(rec) + '.json', mimeType: JSON_MIME, data: json };

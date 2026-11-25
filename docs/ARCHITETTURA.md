@@ -29,7 +29,15 @@ app/
 ## Dati
 
 - Tutto in IndexedDB sul dispositivo; `navigator.storage.persist()` richiesto all'avvio.
-- Un record per seduta (foglio + osservazione), partita, piano, esercizio, giocatore; `schemaVersion` con migrazioni.
+- Un record per seduta, partita, piano, esercizio, giocatore; `schemaVersion` (ora 3) con migrazioni.
+- **Seduta modulare** (schema 3): `session.modules` è l'elenco ordinato delle sezioni presenti tra
+  `program, attendance, observation, review, errors, selfeval, trainer` (`SESSION_MODULES` in `model.js`).
+  Una seduta nuova ha `['program']` (o le sezioni ricordate in `prefs.defaultModules`). La migrazione 2 → 3 imposta
+  Programma + le sezioni che contengono dati e toglie le righe completamente vuote dei vecchi numeri fissi.
+  Il `.docx` è uno solo per seduta e contiene solo le sezioni presenti, nell'ordine scelto (chiave Drive
+  `docx-plan`, così si aggiorna lo stesso file; il vecchio `.docx` dell'osservazione viene messo nel cestino).
+- Liste dinamiche che partono vuote (esercizi, righe di osservazione, righe libere del bilancio, attività del piano;
+  la partita parte con una riga) e si allungano con "+".
 
 ## Google Drive (monodirezionale app → Drive)
 
@@ -44,6 +52,18 @@ app/
 - **Libreria e rosa**: un `.json` (e un `.docx` per la libreria) per raccolta. Prima di ogni invio si scarica il
   remoto e si unisce per elemento (vince `updatedAt` più recente, cancellazioni come tombstone), controllando la
   `version` del file per ridurre le corse (Drive non offre upload condizionati).
+- **Eliminazioni**: eliminare una seduta/partita/piano mette una voce `deleted` nella coda persistente (anche
+  offline): al prossimo giro tutti i suoi file (ritrovati da id noti o `appProperties`) vanno nel **cestino** di Drive
+  (`files.update {trashed:true}`; 404 = già fatto). Una tombstone `{id: deletedAt}` finisce in
+  "Rugby Coach - Eliminati.json" (raccolta `deleted`, unita come libreria/rosa): il recupero su altri telefoni non
+  reimporta le schede eliminate e le toglie anche lì (se non modificate dopo l'eliminazione). Regola unica: vince
+  l'evento più recente (`resolveDeletions` in model.js). Se una scheda è modificata DOPO l'eliminazione, la modifica
+  vince: la tombstone è superata da una voce `alive {id: updatedAt}` nello stesso indice (così non torna dai telefoni
+  che la scheda non l'hanno) e il PATCH dei file manda `trashed:false` (tutti i file escono dal cestino). Se
+  l'eliminazione è più recente, la scheda si toglie in locale e non viene rimandata: l'indice è letto prima di ogni
+  giro con schede da inviare. Dopo un aggiornamento dello schema le schede migrate tornano in coda una volta. Esercizi e giocatori
+  eliminati: tombstone nella raccolta e libreria/rosa rigenerate senza l'elemento. Documenti non più prodotti
+  (es. il `.docx` della libreria vuota) vanno nel cestino.
 - `supportsAllDrives=true` su tutte le chiamate.
 
 ## Sicurezza

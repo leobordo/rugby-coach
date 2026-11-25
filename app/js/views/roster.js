@@ -2,7 +2,7 @@
 import { h, clear, textInput, confirmDialog, toast, debounce } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, newPlayer } from '../model.js';
-import { pageHeader } from './common.js';
+import { pageHeader, confirmDelete } from './common.js';
 
 export async function rosterView(root, params, query) {
   const cat = CATEGORIES.includes(query.get('cat')) ? query.get('cat') : ((await repo.getSetting('prefs', {})) || {}).rosterCat || 'U8';
@@ -42,7 +42,7 @@ export async function rosterView(root, params, query) {
         textInput(p, 'name', save, { label: 'Nome' }),
         catSel,
         h('button.icon-btn.danger', { type: 'button', 'aria-label': 'Rimuovi ' + p.name, on: { click: async () => {
-          if (!(await confirmDialog(`Rimuovere ${p.name} dalla rosa?`, { okText: 'Rimuovi', danger: true }))) return;
+          if (!(await confirmDelete(`${p.name || 'Giocatore'} (rosa)`))) return;
           await repo.remove('player', p.id); render();
         } } }, '✕')));
     }

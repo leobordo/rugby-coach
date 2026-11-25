@@ -171,7 +171,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         return;
       }
       if (!sel) {
-        ctxBar.append(h('span.ctx-hint', tool === 'select' ? 'Tocca un elemento per selezionarlo e trascinarlo.' : TOOLS.find((t) => t.id === tool).label + ': tocca o trascina sul campo.'),
+        ctxBar.append(h('span.ctx-hint', tool === 'select' ? 'Tocca o clicca un elemento per selezionarlo e trascinarlo.' : TOOLS.find((t) => t.id === tool).label + ': tocca o clicca sul campo, oppure trascina.'),
           h('button.btn.small', { type: 'button', on: { click: exportPng } }, 'Scarica immagine'),
           h('button.btn.small', { type: 'button', on: { click: exportJson } }, 'Salva disegno su file'),
           h('button.btn.small', { type: 'button', on: { click: importJson } }, 'Apri disegno da file'),

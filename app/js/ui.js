@@ -51,7 +51,7 @@ export function toast(msg, type = 'info', ms = 2600) {
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 400); }, Math.min(ms, 5000));
 }
 
-export function modal({ title, content, actions = [{ label: 'Chiudi', value: null }], wide = false, className = '' }) {
+export function modal({ title, content, actions = [{ label: 'Chiudi', value: null }], wide = false, className = '', focus }) {
   return new Promise((resolve) => {
     const dlg = h('dialog.modal' + (wide ? '.wide' : '') + (className ? '.' + className : ''), { 'aria-label': title || 'Finestra' });
     const close = (v) => { dlg.close(); dlg.remove(); resolve(v); };
@@ -67,13 +67,17 @@ export function modal({ title, content, actions = [{ label: 'Chiudi', value: nul
     document.body.appendChild(dlg);
     dlg._close = close;
     dlg.showModal();
-    const first = dlg.querySelector('input, textarea, select');
-    if (first) setTimeout(() => first.focus(), 30);
+    // focus: primo campo, altrimenti il pulsante sicuro (Annulla) per le conferme pericolose, o il principale
+    const first = dlg.querySelector('input:not([type=checkbox]), textarea, select');
+    const btns = [...footer.querySelectorAll('button')];
+    const target = first || (focus === 'cancel' ? btns[0] : btns.find((b) => b.classList.contains('primary') || b.classList.contains('danger')) || btns[btns.length - 1]);
+    if (target) setTimeout(() => target.focus(), 30);
   });
 }
 
-export function confirmDialog(msg, { okText = 'Conferma', danger = false, title = 'Conferma' } = {}) {
-  return modal({ title, content: h('p', msg), actions: [{ label: 'Annulla', value: false }, { label: okText, value: true, primary: !danger, danger }] });
+export function confirmDialog(msg, { okText = 'Conferma', danger = false, title = 'Conferma', focusCancel = danger } = {}) {
+  return modal({ title, content: h('p', msg), focus: focusCancel ? 'cancel' : 'ok',
+    actions: [{ label: 'Annulla', value: false, cancel: true }, { label: okText, value: true, primary: !danger, danger }] });
 }
 
 export function promptDialog(title, value = '', { multiline = false, placeholder = '', okText = 'OK', label = '' } = {}) {

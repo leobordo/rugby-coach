@@ -49,7 +49,9 @@ export function boardWithThumb(variant = 0) {
 }
 
 export function sampleSession() {
-  const s = M.newSession({ date: '2026-11-24', categories: ['U8'], location: 'Campo comunale' });
+  const s = M.newSession({ date: '2026-11-24', categories: ['U8'], location: 'Campo comunale',
+    modules: ['program', 'attendance', 'observation', 'review', 'errors', 'selfeval', 'trainer'] });
+  s.planItems = Array.from({ length: 5 }, () => M.newPlanItem());
   s.attendance = { U6: 4, U8: 11, U10: null, U12: null, U14: null, U16: null };
   const names = ['Riscaldamento', 'Fulmine', 'Palla quadrata', 'Mastino', 'Partita'];
   s.planItems.forEach((p, i) => {

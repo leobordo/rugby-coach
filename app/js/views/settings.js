@@ -4,10 +4,10 @@
 import { h, clear, toast, confirmDialog, downloadBlob, pickFile, debounce } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { recordTitle, STORE_OF_KIND, todayISO } from '../model.js';
+import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES, MODULE_ORDER, sanitizeModules } from '../model.js';
 import { pageHeader } from './common.js';
 
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.4.1';
 
 const folderUrl = (f) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(f.folderId);
 
@@ -40,8 +40,15 @@ export async function settingsView(root) {
   const body = h('div.settings');
   root.append(pageHeader('Impostazioni'), body);
   const render = async () => {
+    // "Sezioni della seduta" e "Aiuto" compaiono subito; Drive e Avanzate appena pronti (in parallelo)
     clear(body);
-    body.append(await driveCard(render), helpCard(), await advancedSection(render));
+    const sections = sectionsCard(render);
+    const help = helpCard();
+    body.append(sections, help);
+    const [drive, adv] = await Promise.all([driveCard(render), advancedSection(render)]);
+    if (!sections.isConnected) return; // pagina già ridisegnata
+    body.prepend(drive);
+    body.append(adv);
   };
   await render();
 }
@@ -71,6 +78,30 @@ async function driveCard(rerender) {
   return sec;
 }
 
+// Sezioni con cui partono i nuovi allenamenti (voce semplice, fuori da Avanzate)
+function sectionsCard(rerender) {
+  const prefs = repo.peekSetting('prefs', {}) || {};
+  const mods = prefs.defaultModules ? sanitizeModules(prefs.defaultModules) : DEFAULT_MODULES;
+  const sec = h('section.card#sezioni', h('h2', 'Sezioni della seduta'),
+    h('p', 'I nuovi allenamenti partono con: ', h('strong', mods.map((m) => SESSION_MODULES[m].label).join(' · ')), '.'));
+  const list = h('div.module-pick');
+  for (const m of MODULE_ORDER) {
+    const input = h('input', { type: 'checkbox', value: m, checked: mods.includes(m), disabled: m === 'program' });
+    input.addEventListener('change', async () => {
+      const chosen = MODULE_ORDER.filter((x) => x === 'program' || list.querySelector(`input[value="${x}"]`).checked);
+      const cur = (await repo.getSetting('prefs', {})) || {};
+      if (chosen.length === 1) { const { defaultModules, ...rest } = cur; await repo.setSetting('prefs', rest); } else await repo.setSetting('prefs', { ...cur, defaultModules: chosen });
+      toast('Salvato: vale per i prossimi allenamenti.', 'ok');
+      rerender();
+    });
+    list.append(h('label.module-option', input, h('span', h('strong', SESSION_MODULES[m].label), h('small', SESSION_MODULES[m].desc))));
+  }
+  sec.append(list);
+  if (prefs.defaultModules) sec.append(h('button.btn', { type: 'button', on: { click: async () => { const { defaultModules, ...rest } = prefs; await repo.setSetting('prefs', rest); toast('I nuovi allenamenti partono con il solo Programma.', 'ok'); rerender(); } } }, 'Torna al solo Programma'));
+  sec.append(h('p.hint', 'Gli allenamenti già fatti non cambiano. In un allenamento puoi sempre aggiungere o togliere sezioni.'));
+  return sec;
+}
+
 function helpCard() {
   return h('section.card', h('h2', 'Aiuto'),
     h('p', 'Come installare l\'app sul telefono, condividere una scheda, cosa fare se cambi telefono.'),
@@ -96,7 +127,7 @@ async function advancedSection(rerender) {
         const entries = await sync.allEntries();
         const qList = h('ul.queue');
         for (const e of entries.sort((a, b) => (b.dirtyAt || 0) - (a.dirtyAt || 0)).slice(0, 50)) {
-          const isColl = e.kind === 'library' || e.kind === 'roster';
+          const isColl = e.kind === 'library' || e.kind === 'roster' || e.kind === 'deleted';
           const rec = isColl ? { kind: e.kind } : await repo.get(e.kind, e.id);
           if (!rec) continue;
           if (isColl && !Object.keys(e.files || {}).length && e.status === 'synced') continue;

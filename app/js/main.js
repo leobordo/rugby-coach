@@ -2,7 +2,7 @@
 import { h, clear, toast } from './ui.js';
 import * as repo from './repo.js';
 import * as sync from './app-sync.js';
-import { flushAll } from './views/common.js';
+import { flushAll, setPreparer } from './views/common.js';
 import { homeView } from './views/home.js';
 import { sessionView } from './views/session.js';
 import { matchView } from './views/match.js';
@@ -30,6 +30,28 @@ const routes = [
 const main = document.getElementById('view');
 let cleanup = null;
 let navToken = 0;
+let prepared = null; // pagina preparata fuori schermo: { raw, container, res, nav }
+
+const setNav = (nav) => {
+  document.querySelectorAll('.main-nav a, .bottom-nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === nav));
+  document.body.dataset.route = nav;
+};
+const discardPrepared = () => { if (prepared && typeof prepared.res === 'function') { try { prepared.res(); } catch { /* */ } } prepared = null; };
+
+async function prepareView(hash) {
+  const raw = hash.replace(/^#/, '') || '/';
+  const [path, qs] = raw.split('?');
+  for (const [re, view, nav] of routes) {
+    const m = re.exec(path);
+    if (!m) continue;
+    const container = h('div.view-inner');
+    const res = await view(container, m, new URLSearchParams(qs || ''));
+    discardPrepared();
+    prepared = { raw, container, res, nav };
+    return;
+  }
+}
+setPreparer(prepareView);
 
 async function route() {
   flushAll();
@@ -39,11 +61,21 @@ async function route() {
   const [path, qs] = raw.split('?');
   const query = new URLSearchParams(qs || '');
   const my = ++navToken;
+  if (prepared && prepared.raw === raw) { // pagina già pronta: compare subito, senza attese
+    const p = prepared; prepared = null;
+    setNav(p.nav);
+    clear(main);
+    main.append(p.container);
+    cleanup = p.res;
+    if (!location.hash.includes('#sez-')) window.scrollTo(0, 0);
+    main.focus({ preventScroll: true });
+    return;
+  }
+  discardPrepared();
   for (const [re, view, nav] of routes) {
     const m = re.exec(path);
     if (!m) continue;
-    document.querySelectorAll('.main-nav a, .bottom-nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === nav));
-    document.body.dataset.route = nav;
+    setNav(nav);
     const container = h('div.view-inner');
     clear(main);
     main.append(container);

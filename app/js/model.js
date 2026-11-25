@@ -2,7 +2,7 @@
 // Struttura fedele alle 4 schede originali (vedi analysis/REQUISITI.md sez. 1).
 
 export const APP_ID = 'rugby-coach';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const CATEGORIES = ['U6', 'U8', 'U10', 'U12', 'U14', 'U16'];
 
@@ -54,8 +54,22 @@ export const BLOCK_TYPES = {
   CHIACCHIERATA_FINALE: { label: 'Chiacchierata finale', defaultTitle: 'Chiacchierata su cosa hanno imparato' },
 };
 
-// Numero di righe predefinito delle liste dinamiche = righe degli originali (R4, D12)
-export const DEFAULT_ROWS = { observations: 4, planItems: 5, matchRows: 6 };
+// Liste dinamiche: si parte vuoti (o con il minimo) e si aggiunge con "+" (feedback utente, v1.4).
+// Le righe fisse degli originali (4, 5, 6) restano solo come riferimento storico.
+export const DEFAULT_ROWS = { observations: 0, planItems: 0, matchRows: 1 };
+
+// Seduta modulare (v1.4): il coach compone la seduta con le sole sezioni che gli servono.
+export const SESSION_MODULES = {
+  program: { label: 'Programma', desc: 'Esercizi con durata, materiale, obiettivi, parole chiave, cosa osservo.' },
+  attendance: { label: 'Presenze', desc: 'Quanti bambini per categoria (U6…U16), con il totale.' },
+  observation: { label: 'Osservazione esercizi', desc: 'Per ogni esercizio: obiettivo, cosa va bene, cosa no, miglioramenti.' },
+  review: { label: 'Bilancio della seduta', desc: 'Da solo, prima del saluto finale: com\'è andato ogni esercizio e i singoli bambini.' },
+  errors: { label: 'Errori e cause', desc: 'Le 7 domande da fare insieme agli atleti, con Sì/No.' },
+  selfeval: { label: 'Autovalutazione dell\'osservazione', desc: 'Il tuo livello di osservazione (meglio se qualcuno ti guarda).' },
+  trainer: { label: 'Preparatore atletico', desc: 'Tempo di lavoro e numero di sollecitazioni.' },
+};
+export const MODULE_ORDER = Object.keys(SESSION_MODULES);
+export const DEFAULT_MODULES = ['program'];
 
 export const KINDS = ['session', 'match', 'plan', 'exercise', 'player'];
 export const STORE_OF_KIND = { session: 'sessions', match: 'matches', plan: 'plans', exercise: 'exercises', player: 'players' };
@@ -142,9 +156,10 @@ export function newSession(extra = {}) {
     date: todayISO(),
     categories: [],
     location: '',
+    modules: [...DEFAULT_MODULES],
     attendance: emptyAttendance(),
-    planItems: Array.from({ length: DEFAULT_ROWS.planItems }, () => newPlanItem()),
-    observations: Array.from({ length: DEFAULT_ROWS.observations }, () => newObservation()),
+    planItems: [],
+    observations: [],
     review: newReview(),
     termPlanRef: null,
     ...extra,
@@ -163,7 +178,7 @@ export function newMatch(extra = {}) {
     opponent: '',
     under: '',
     customColumnLabel: '',
-    rows: Array.from({ length: DEFAULT_ROWS.matchRows }, () => newMatchRow()),
+    rows: [newMatchRow()],
     notes: '',
     numPlayers: null,
     result: '',
@@ -187,7 +202,7 @@ export function templatePlanSession() {
   return newPlanSession({
     blocks: [
       newBlock('CHIACCHIERATA_INIZIALE'),
-      newBlock('RISCALDAMENTO', { subItems: ['', ''] }),
+      newBlock('RISCALDAMENTO', { subItems: [] }),
       newBlock('PAUSA'), newBlock('GIOCO'),
       newBlock('PAUSA'), newBlock('GIOCO'),
       newBlock('PAUSA'), newBlock('PARTITA'),
@@ -386,10 +401,9 @@ export function sessionFromPlanSession(plan, sessionIndex, exercises = [], extra
     }
   }
   const cats = plan.category ? [plan.category] : [];
-  const s = newSession({ categories: cats, planItems: items.length ? items : [newPlanItem()],
+  const s = newSession({ categories: cats, planItems: items,
     termPlanRef: { termPlanId: plan.id, sessionIndex }, ...extra });
-  s.observations = s.planItems.filter((p) => p.name).map((p) => newObservation(observationFromPlanItem(p)));
-  while (s.observations.length < DEFAULT_ROWS.observations) s.observations.push(newObservation());
+  if (s.modules.includes('observation')) s.observations = s.planItems.filter((p) => p.name).map((p) => newObservation(observationFromPlanItem(p)));
   syncReviewRows(s);
   return s;
 }
@@ -431,6 +445,7 @@ export function recordTitle(rec) {
     case 'player': return rec.name || 'Giocatore';
     case 'library': return 'Libreria esercizi';
     case 'roster': return 'Rosa giocatori';
+    case 'deleted': return 'Eliminati';
     default: return 'Scheda';
   }
 }
@@ -453,8 +468,51 @@ export function fileBaseName(rec, variant = 'main') {
     const season = rec.season ? String(rec.season).replace('/', '-') : '';
     return sanitizeFileName(joinNonEmpty(['Piano', rec.title || 'trimestrale', rec.category, season], ' '));
   }
-  if (rec.kind === 'library' || rec.kind === 'roster') return 'Rugby Coach - ' + recordTitle(rec);
+  if (rec.kind === 'library' || rec.kind === 'roster' || rec.kind === 'deleted') return 'Rugby Coach - ' + recordTitle(rec);
   return sanitizeFileName(recordTitle(rec));
+}
+
+// ---------- moduli della seduta ----------
+const OBS_FIELDS = ['name', 'description', 'objective', 'positive', 'negative', 'improvements'];
+export const isBlankObservation = (o) => !o.drawing && OBS_FIELDS.every((f) => isBlankValue(o[f]));
+export const isBlankPlanItem = (p) => !p.drawing && ['name', 'description', 'materialsSpace', 'objectives', 'toObserve'].every((f) => isBlankValue(p[f]))
+  && !toInt(p.durationMin) && !(p.keywords || []).length;
+export const isBlankReviewRow = (r) => ['label', 'overall', 'individual'].every((f) => isBlankValue(r[f]));
+
+// Il modulo contiene dati inseriti dall'utente?
+export function moduleHasData(session, mod) {
+  const rv = session.review || {};
+  switch (mod) {
+    case 'program': return (session.planItems || []).some((p) => !isBlankPlanItem(p));
+    case 'attendance': return totalAttendance(session) > 0 || Object.values(session.attendance || {}).some((v) => v === 0);
+    case 'observation': return (session.observations || []).some((o) => !isBlankObservation(o));
+    case 'review': return (rv.perExercise || []).some((r) => !isBlankReviewRow(r));
+    case 'errors': return (rv.errorsCauses || []).some((q) => q.answer || (q.note && q.note.trim()));
+    case 'selfeval': return !!(rv.observationLevel || rv.errorsCorrectedWell || (rv.observer && rv.observer.trim()));
+    case 'trainer': return !!(rv.workTimeRatio || rv.solicitations || toInt(rv.solicitationsCount) || (rv.trainer && rv.trainer.trim()));
+    default: return false;
+  }
+}
+
+// Svuota i dati di un modulo (quando l'utente lo rimuove)
+export function clearModule(session, mod) {
+  const rv = session.review || (session.review = newReview());
+  switch (mod) {
+    case 'attendance': session.attendance = emptyAttendance(); break;
+    case 'observation': session.observations = []; break;
+    case 'review': rv.perExercise = []; syncReviewRows(session); break;
+    case 'errors': rv.errorsCauses = newErrorsCauses(); break;
+    case 'selfeval': rv.observationLevel = null; rv.errorsCorrectedWell = null; rv.observer = ''; break;
+    case 'trainer': rv.workTimeRatio = null; rv.solicitations = null; rv.solicitationsCount = null; rv.trainer = ''; break;
+    default: break;
+  }
+  return session;
+}
+
+export function sanitizeModules(list) {
+  const out = [];
+  for (const m of Array.isArray(list) ? list : []) if (SESSION_MODULES[m] && !out.includes(m)) out.push(m);
+  return out.length ? out : [...DEFAULT_MODULES];
 }
 
 export function observationHasContent(session) {
@@ -492,7 +550,27 @@ export const MIGRATIONS = {
     }
     return rec;
   },
+  // v2 -> v3: seduta modulare. I moduli sono Programma + quelli che contengono dati, nell'ordine standard.
+  //           Le righe completamente vuote (dei vecchi numeri fissi) vengono tolte; nessun dato perso.
+  2: (rec) => {
+    if (rec.kind === 'session') {
+      rec.planItems = (rec.planItems || []).filter((p) => !isBlankPlanItem(fillPlanItemDefaults(p)));
+      const kept = new Set(rec.planItems.map((p) => p.id));
+      rec.observations = (rec.observations || []).filter((o) => !isBlankObservation({ ...newObservation(), ...o }));
+      if (rec.review && Array.isArray(rec.review.perExercise)) {
+        rec.review.perExercise = rec.review.perExercise.filter((r) => (r.ref ? kept.has(r.ref) || !isBlankReviewRow({ label: '', overall: '', individual: '', ...r }) : !isBlankReviewRow({ label: '', overall: '', individual: '', ...r })));
+      }
+      const probe = { ...rec, review: { ...newReview(), ...(rec.review || {}) }, attendance: { ...emptyAttendance(), ...(rec.attendance || {}) } };
+      rec.modules = MODULE_ORDER.filter((m) => m === 'program' || moduleHasData(probe, m));
+    }
+    if (rec.kind === 'match') {
+      const rows = (rec.rows || []).filter((r) => (r.label && r.label.trim()) || (r.values || []).some((v) => toInt(v)));
+      rec.rows = rows.length ? rows : (rec.rows || []).slice(0, 1);
+    }
+    return rec;
+  },
 };
+const fillPlanItemDefaults = (p) => ({ ...newPlanItem(), ...p });
 
 export function splitTags(s) {
   return String(s || '').split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
@@ -548,6 +626,7 @@ export function normalizeRecord(rec) {
       return { id: 'q' + (i + 1), question: q, answer: old.answer === 'yes' || old.answer === 'no' ? old.answer : null, note: old.note || '' };
     });
     r.review.perExercise = (r.review.perExercise || []).map((x) => fillDefaults(x, newReviewRow({ id: x.id || uid() })));
+    r.modules = sanitizeModules(rec.modules);
     syncReviewRows(r);
   }
   if (rec.kind === 'match') {
@@ -640,4 +719,24 @@ export function mergeCollection({ local = [], localTombs = {}, remote = [], remo
     || remote.some((x) => !kept.has(x.id))
     || Object.keys(tombs).some((id) => !remoteTombs[id] || ts(remoteTombs[id]) < ts(tombs[id]));
   return { items, tombs, upserts, deletes, remoteChanged };
+}
+
+// ---------- Eliminazioni delle schede tra dispositivi: vince l'evento più recente ----------
+// localTombs/remoteTombs: { id: deletedAt }; localAlive/remoteAlive: { id: updatedAt della modifica che ha superato
+// un'eliminazione }; updatedOf(id): updatedAt della scheda locale, o null se qui non c'è.
+// Restituisce le tombstone e gli "alive" risultanti, le schede da togliere in locale (eliminazione più recente)
+// e quelle da rimandare su Drive (modifica locale più recente: i loro file escono dal cestino).
+export function resolveDeletions({ localTombs = {}, remoteTombs = {}, localAlive = {}, remoteAlive = {}, updatedOf = () => null }) {
+  const alive = mergeTombstones(localAlive, remoteAlive);
+  const tombs = mergeTombstones(localTombs, remoteTombs);
+  const remove = [];
+  const revive = [];
+  for (const [id, at] of Object.entries(tombs)) {
+    if (alive[id] && ts(alive[id]) > ts(at)) { delete tombs[id]; continue; } // già superata da una modifica
+    const upd = updatedOf(id);
+    if (upd == null) continue;
+    if (ts(at) >= ts(upd)) { remove.push(id); continue; }
+    alive[id] = upd; delete tombs[id]; revive.push(id);
+  }
+  return { tombs, alive, remove, revive };
 }

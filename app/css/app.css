@@ -613,3 +613,36 @@ body.board-open .toasts { top: calc(64px + env(safe-area-inset-top)); bottom: au
   .tool-label { font-size: .5rem; letter-spacing: -.02em; }
   .board-top > .btn, .board-top-actions .btn { font-size: .62rem; letter-spacing: -.03em; }
 }
+
+/* ===== v1.4: seduta modulare ===== */
+.module { border-top: 3px solid var(--line); padding-top: 12px; }
+.module-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.module-head .sec-title { margin: 0; flex: 1 1 260px; }
+.module-ctl { display: flex; gap: 6px; }
+.empty-list { color: var(--muted); font-weight: 600; background: #f6f8f6; border: 2px dashed var(--soft-line); border-radius: var(--radius); padding: 14px; margin: 8px 0; }
+.add-section { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 22px 0 6px; padding-top: 14px; border-top: 3px dashed var(--soft-line); }
+.add-section-btn { border-style: dashed; }
+.module-pick { display: flex; flex-direction: column; gap: 8px; }
+.module-option { display: flex; gap: 12px; align-items: flex-start; border: 2px solid var(--line); border-radius: var(--radius); padding: 10px 12px; cursor: pointer; min-height: 56px; }
+.module-option:has(input:checked) { background: #e8f5e9; border-color: var(--ok); }
+.module-option input { width: 26px; height: 26px; flex: 0 0 auto; margin-top: 2px; }
+.module-option span { display: flex; flex-direction: column; gap: 2px; }
+.module-option small { color: var(--muted); font-weight: 600; }
+.remember { margin-top: 10px; }
+dialog.modal { max-height: 90vh; overflow: auto; }
+dialog.modal :focus-visible { outline: 3px solid #1565c0; outline-offset: 2px; }
+
+/* ===== PC: uso dello spazio (nav in alto, elenchi a griglia, tabelle leggibili) ===== */
+@media (min-width: 1100px) {
+  .rec-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 12px; }
+  .settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; max-width: 1400px; }
+  .settings > .advanced { grid-column: 1 / -1; }
+  .onboarding .onb-hero { max-width: 560px; }
+  .md-doc { margin: 0 auto; }
+  .sheet-head .head-extra { grid-template-columns: 2fr 1fr; }
+}
+@media (min-width: 1600px) {
+  main { max-width: 1680px; }
+  .ex-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+}
+.check input[type=checkbox], .module-option input[type=checkbox] { width: 44px; height: 44px; accent-color: var(--brand); flex: 0 0 auto; }

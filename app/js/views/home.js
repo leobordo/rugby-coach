@@ -3,9 +3,9 @@
 import { h, clear, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { CATEGORIES, newSession, newMatch, newPlan, duplicateRecord, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
+import { CATEGORIES, sanitizeModules, newSession, newMatch, newPlan, duplicateRecord, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
 import { banners } from './banners.js';
-import { moreMenu } from './common.js';
+import { moreMenu, confirmDelete, openPrepared } from './common.js';
 
 const TABS = {
   sedute: { kind: 'session', label: 'Allenamenti', newLabel: '+ Nuovo allenamento' },
@@ -51,14 +51,15 @@ export async function homeView(root, params, query) {
   search.addEventListener('input', () => { filters.q = search.value.trim().toLowerCase(); renderList(); });
 
   async function create() {
-    const rec = conf.kind === 'session' ? newSession() : conf.kind === 'match' ? newMatch() : newPlan();
+    const prefs = (await repo.getSetting('prefs', {})) || {};
+    const rec = conf.kind === 'session' ? newSession(prefs.defaultModules ? { modules: sanitizeModules(prefs.defaultModules) } : {}) : conf.kind === 'match' ? newMatch() : newPlan();
     if (conf.kind === 'plan') {
       const existing = await repo.list('plan');
       rec.title = `${ordinalRoman((existing.length % 4) + 1)} TRIMESTRE`;
       rec.term = (existing.length % 4) + 1;
     }
     await repo.save(rec);
-    location.hash = openHref(rec);
+    await openPrepared(openHref(rec));
   }
 
   async function renderList() {
@@ -98,11 +99,9 @@ export async function homeView(root, params, query) {
           h('span.rec-meta', meta || ' '),
           h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
         moreMenu([
-          r.kind === 'session' ? h('a.btn', { href: `#/seduta/${r.id}/osservazione` }, '👁 Scheda di osservazione') : null,
           h('button.btn', { type: 'button', on: { click: async () => { const d = duplicateRecord(r); if (d.kind === 'session' || d.kind === 'match') d.date = r.date; await repo.save(d); toast('Copia creata.', 'ok'); renderList(); } } }, '⧉ Duplica'),
           h('button.btn.danger', { type: 'button', on: { click: async () => {
-            const msg = sync.state.folder ? 'Eliminare questa scheda dal telefono? Il documento già salvato su Drive resta.' : 'Eliminare definitivamente questa scheda?';
-            if (!(await confirmDialog(msg, { okText: 'Elimina', danger: true }))) return;
+            if (!(await confirmDelete(`"${title}"`))) return;
             await repo.remove(r.kind, r.id); toast('Eliminata.', 'ok'); renderList();
           } } }, '🗑 Elimina'),
         ], { label: '⋯' })));

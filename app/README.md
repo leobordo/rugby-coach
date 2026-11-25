@@ -20,6 +20,15 @@ Così si apre con un tocco come le altre app e funziona anche senza Internet.
 2. Tocca **Condividi** (il quadrato con la freccia **⬆**, in basso).
 3. Scorri e tocca **Aggiungi alla schermata Home** → **Aggiungi**.
 
+## Preparare un allenamento
+
+1. In **Schede** tocca **+ Nuovo allenamento**.
+2. Tocca **+ Aggiungi esercizio** (o **+ Dalla libreria**) per ogni esercizio: nome, minuti, materiale, obiettivi…
+3. Ti serve altro? Tocca **+ Aggiungi sezione** e scegli solo quello che usi: Presenze, Osservazione esercizi,
+   Bilancio della seduta, Errori e cause, Autovalutazione, Preparatore atletico. Ogni sezione si sposta con ↑ ↓
+   e si toglie con ✕. Se scegli **Ricorda queste sezioni**, i prossimi allenamenti partono già così; puoi cambiarle quando vuoi in **Impostazioni › Sezioni della seduta**.
+4. Tocca **✓ Fine allenamento**. Il documento Word contiene solo le sezioni che hai messo.
+
 ## Collegare Google Drive
 
 1. Tocca **Collega Google Drive** (alla prima apertura o in **Impostazioni**).
@@ -63,6 +72,10 @@ Nessun doppione: i documenti su Drive vengono aggiornati, non copiati.
 Se poi modifichi la stessa scheda nell'app, il documento su Drive viene aggiornato.
 
 **I nomi dei bambini dove finiscono?** Solo sul tuo telefono e nel tuo Google Drive. Nessun altro li riceve.
+
+**Se elimino una scheda, un esercizio o un giocatore?** Sparisce dal telefono e da Google Drive: i documenti
+finiscono nel **cestino di Drive**, da dove puoi recuperarli per 30 giorni. Anche sugli altri telefoni collegati
+non torna più. Funziona anche senza rete: l'eliminazione su Drive avviene appena torna la connessione.
 
 **Ho cancellato i dati del browser.** Collega di nuovo Google Drive con lo stesso account: le schede tornano.
 

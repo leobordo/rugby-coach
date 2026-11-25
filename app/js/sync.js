@@ -14,7 +14,8 @@ import { APP_ID } from './model.js';
 export const SYNC_STATUS = { PENDING: 'pending', SYNCING: 'syncing', SYNCED: 'synced', ERROR: 'error' };
 
 // Raccolte salvate come un unico file (libreria esercizi, rosa): tipo di dato contenuto su Drive
-export const COLLECTION_REMOTE_KIND = { library: 'exercise', roster: 'player' };
+// 'deleted' = indice delle schede eliminate ("Rugby Coach - Eliminati.json"): le eliminazioni non tornano dal recupero
+export const COLLECTION_REMOTE_KIND = { library: 'exercise', roster: 'player', deleted: 'tombstones' };
 export const COLLECTION_ID = 'all';
 const REMOTE_TO_COLLECTION = Object.fromEntries(Object.entries(COLLECTION_REMOTE_KIND).map(([k, v]) => [v, k]));
 
@@ -99,6 +100,23 @@ export function createSyncEngine({
     return e;
   }
 
+  // Eliminazione di una scheda: entra nella coda (funziona anche offline); al prossimo giro i suoi file su Drive
+  // vanno nel cestino. La voce resta finché non è fatto.
+  async function markDeleted(kind, id) {
+    const key = syncKey(kind, id);
+    const e = (await store.get(key)) || { key, kind, id, files: {} };
+    e.deleted = true;
+    e.status = SYNC_STATUS.PENDING;
+    e.dirtyAt = now();
+    e.rev = (e.rev || 0) + 1;
+    e.attempts = 0;
+    e.nextAttemptAt = 0;
+    e.error = null;
+    await store.put(e);
+    onChange(e);
+    return e;
+  }
+
   async function forget(kind, id) {
     await store.delete(syncKey(kind, id));
     onChange({ key: syncKey(kind, id), kind, id, status: null });
@@ -117,22 +135,35 @@ export function createSyncEngine({
     return ap;
   }
 
-  async function uploadArtifact(entry, art, folderId, files) {
+  async function uploadArtifact(entry, art, parent, files) {
     const appProperties = appPropsFor(entry, art, files);
     const known = files[art.key];
     const base = { name: art.name, mimeType: art.mimeType, data: art.data, appProperties };
     if (known) {
       try {
-        return await drive.uploadFile({ ...base, fileId: known });
+        // la versione che si invia è la più recente (le eliminazioni più recenti sono già state applicate prima
+        // del giro): se il file era nel cestino ne esce, insieme a tutti gli altri file della scheda
+        return await drive.uploadFile({ ...base, fileId: known, untrash: true });
       } catch (e) {
         if (!(e instanceof DriveHttpError && e.status === 404)) throw e;
         // il file è stato eliminato su Drive: lo ricreiamo
       }
     }
-    return drive.uploadFile({ ...base, parents: [folderId] });
+    return drive.uploadFile({ ...base, parents: [parent] });
+  }
+
+  async function trashOne(entry, ctx) {
+    const files = { ...(entry.files || {}) };
+    const remote = (await ctx.remoteIndex()).get(entry.key) || {};
+    const ids = new Set([...Object.values(files), ...Object.values(remote)].filter(Boolean));
+    for (const id of ids) await drive.trashFile(id);
+    const latest = (await store.get(entry.key)) || entry;
+    if (latest.deleted && latest.rev === entry.rev) { await store.delete(entry.key); onChange({ key: entry.key, kind: entry.kind, id: entry.id, status: null }); return 'deleted'; }
+    return SYNC_STATUS.PENDING;
   }
 
   async function syncOne(entry, folderId, ctx) {
+    if (entry.deleted) return trashOne(entry, ctx);
     const record = await getRecord(entry.kind, entry.id);
     if (!record) { await store.delete(entry.key); return 'deleted'; }
     const startedRev = entry.rev;
@@ -140,9 +171,11 @@ export function createSyncEngine({
     await store.put(entry); onChange(entry);
     const files = { ...entry.files };
     const links = { ...(entry.links || {}) };
-    // primo invio verso questa cartella da questo dispositivo: cerca i file già esistenti della scheda
+    // primo invio da questo dispositivo (o cartella cambiata): cerca i file già esistenti della scheda
     let remote = {};
-    if (!files.json) remote = (await ctx.remoteIndex()).get(entry.key) || {};
+    if (!files.json || entry.folderId !== folderId) {
+      remote = (await ctx.remoteIndex()).get(entry.key) || {};
+    }
     for (const [k, v] of Object.entries(remote)) if (!files[k]) files[k] = v;
     const hasRemote = Object.keys(remote).length > 0;
     const knewFiles = Object.keys(entry.files || {}).length > 0;
@@ -151,9 +184,14 @@ export function createSyncEngine({
       // esempio non modificato: non sovrascrive mai, adotta i file che esistono già
     } else {
       const artifacts = await buildArtifacts(entry.kind, record, { known: { ...entry.files }, remote });
-      // i .docx prima del .json, così il .json elenca gli id dei .docx
-      artifacts.sort((a, b) => (a.key === 'json') - (b.key === 'json'));
-      for (const art of artifacts) {
+      const keys = new Set(artifacts.map((a) => a.key));
+      // i .docx prima del .json (così il .json elenca i loro id)
+      const ordered = [...artifacts.filter((a) => a.key !== 'json'), ...artifacts.filter((a) => a.key === 'json')];
+      for (const art of ordered) {
+        if (art.key === 'json') {
+          // documenti non più prodotti (es. il vecchio .docx dell'osservazione, ora unito): nel cestino
+          for (const k of Object.keys(files)) if (!keys.has(k) && files[k]) { await drive.trashFile(files[k]); delete files[k]; delete links[k]; }
+        }
         const res = await uploadArtifact(entry, art, folderId, files);
         files[art.key] = res.id;
         if (res.webViewLink) links[art.key] = res.webViewLink;
@@ -161,7 +199,7 @@ export function createSyncEngine({
     }
     // rilegge: se la scheda è stata modificata durante l'upload resta in attesa
     const latest = (await store.get(entry.key)) || entry;
-    latest.files = { ...latest.files, ...files };
+    latest.files = files;
     latest.links = links;
     latest.error = null;
     latest.attempts = 0;
@@ -185,22 +223,22 @@ export function createSyncEngine({
     const t = now();
     const todo = all.filter((e) => force || e.status !== SYNC_STATUS.ERROR || (e.nextAttemptAt || 0) <= t)
       .sort((a, b) => (a.dirtyAt || 0) - (b.dirtyAt || 0));
-    let idxPromise = null;
+    // una sola files.list per giro, e solo se serve
+    let idx = null;
     const ctx = {
-      // una sola files.list per giro, e solo se serve
       remoteIndex: () => {
-        if (!idxPromise) {
-          idxPromise = (drive.listAppFiles ? drive.listAppFiles(folderId) : Promise.resolve([])).then(buildRemoteIndex);
-          idxPromise.catch(() => { idxPromise = null; });
+        if (!idx) {
+          idx = (drive.listAppFiles ? drive.listAppFiles(folderId) : Promise.resolve([])).then(buildRemoteIndex);
+          idx.catch(() => { idx = null; });
         }
-        return idxPromise;
+        return idx;
       },
     };
     for (const entry of todo) {
       summary.processed++;
       try {
         const st = await syncOne(entry, folderId, ctx);
-        if (st === SYNC_STATUS.SYNCED) summary.synced++;
+        if (st === SYNC_STATUS.SYNCED || st === 'deleted') summary.synced++;
       } catch (e) {
         const latest = (await store.get(entry.key)) || entry;
         if (e instanceof DriveAuthError) {
@@ -238,5 +276,5 @@ export function createSyncEngine({
     return running;
   }
 
-  return { markDirty, adopt, forget, getStatus, pending, processQueue, isRunning: () => !!running };
+  return { markDirty, markDeleted, adopt, forget, getStatus, pending, processQueue, isRunning: () => !!running };
 }

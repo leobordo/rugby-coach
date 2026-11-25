@@ -8,6 +8,15 @@ import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone } fro
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
 
+// ---------- eliminazione: messaggio chiaro, dialog dell'app ----------
+export const DRIVE_TRASH_MSG = 'Elimina dal telefono e da Google Drive? Su Drive finirà nel cestino (recuperabile per 30 giorni).';
+export function deleteMessage(what) {
+  return sync.state.configured && sync.state.folder ? `${what}: ${DRIVE_TRASH_MSG}` : `${what}: eliminare definitivamente dal telefono?`;
+}
+export function confirmDelete(what) {
+  return confirmDialog(deleteMessage(what), { okText: 'Elimina', danger: true, title: 'Elimina', focusCancel: true });
+}
+
 // ---------- autosave (R7) ----------
 const active = new Set();
 export function flushAll() { for (const a of active) a.flush(); }
@@ -230,3 +239,12 @@ export function insertName(textarea, obj, key, name, onChange) {
 
 export function titleOf(rec) { return recordTitle(rec); }
 export { deepClone };
+
+// Apertura di una pagina appena creata: la pagina si prepara fuori schermo e poi cambia l'indirizzo,
+// così compare già completa (niente schermata vuota mentre si leggono i dati). Il router registra il preparatore.
+let preparer = null;
+export function setPreparer(fn) { preparer = fn; }
+export async function openPrepared(hash) {
+  if (preparer) { try { await preparer(hash); } catch (e) { console.warn(e); } }
+  location.hash = hash;
+}

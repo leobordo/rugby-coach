@@ -98,7 +98,7 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       for (const [k, v] of Object.entries(props)) query += ` and appProperties has { key='${qEsc(k)}' and value='${qEsc(v)}' }`;
       if (folderId) query = `'${qEsc(folderId)}' in parents and ` + query;
       if (mimeType) query += ` and mimeType='${qEsc(mimeType)}'`;
-      const files = await listAll(query, 'files(id,name,mimeType,modifiedTime,version,parents,appProperties)');
+      const files = await listAll(query, 'files(id,name,mimeType,modifiedTime,version,trashed,parents,appProperties)');
       // difesa: se Drive restituisce i genitori, scarta i file di altre cartelle
       return folderId ? files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(folderId)) : files;
     },
@@ -119,17 +119,42 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       return request('GET', `${apiBase}/about?${new URLSearchParams({ fields: 'user(displayName,emailAddress)' })}`);
     },
 
+    // Sposta nel CESTINO di Drive (recuperabile per 30 giorni). File già sparito (404) = fatto.
+    async trashFile(id) {
+      try {
+        await request('PATCH', `${apiBase}/files/${encodeURIComponent(id)}?${q({ fields: 'id,trashed' })}`, {
+          body: JSON.stringify({ trashed: true }), headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        });
+        return 'trashed';
+      } catch (e) {
+        if (e instanceof DriveHttpError && e.status === 404) return 'missing';
+        throw e;
+      }
+    },
+
+    // Toglie un file dal cestino (es. scheda eliminata su un altro telefono ma modificata qui DOPO)
+    async untrashFile(id) {
+      return request('PATCH', `${apiBase}/files/${encodeURIComponent(id)}?${q({ fields: 'id,trashed' })}`, {
+        body: JSON.stringify({ trashed: false }), headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      });
+    },
+
     // Crea (POST) o aggiorna lo stesso file (PATCH uploadType=multipart) se fileId è noto.
-    async uploadFile({ fileId, name, mimeType, parents, appProperties, data }) {
+    // Con untrash: l'aggiornamento toglie anche il file dal cestino (su Drive un PATCH su un file cestinato
+    // riesce ma il file RESTA nel cestino): trashed:false nei metadati e controllo della risposta.
+    async uploadFile({ fileId, name, mimeType, parents, appProperties, data, untrash = false }) {
       const meta = { name, mimeType };
       if (appProperties) meta.appProperties = appProperties;
       if (!fileId && parents) meta.parents = parents;
+      if (fileId && untrash) meta.trashed = false;
       const { body, contentType } = buildMultipart(meta, mimeType, data);
-      const fields = 'id,name,webViewLink,modifiedTime';
+      const fields = 'id,name,webViewLink,modifiedTime,trashed';
       if (fileId) {
-        return request('PATCH', `${uploadBase}/files/${encodeURIComponent(fileId)}?${q({ uploadType: 'multipart', fields })}`, {
+        const res = await request('PATCH', `${uploadBase}/files/${encodeURIComponent(fileId)}?${q({ uploadType: 'multipart', fields })}`, {
           body, headers: { 'Content-Type': contentType },
         });
+        if (untrash && res && res.trashed === true) { await this.untrashFile(fileId); res.trashed = false; }
+        return res;
       }
       return request('POST', `${uploadBase}/files?${q({ uploadType: 'multipart', fields })}`, {
         body, headers: { 'Content-Type': contentType },

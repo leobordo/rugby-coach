@@ -96,15 +96,31 @@ try {
   });
 
   let sessionUrl;
-  await step('nuova seduta: foglio allenamento (programma, totali, bilancio, errori, autovalutazione, preparatore)', async () => {
+  // aggiunge sezioni dal foglio "+ Aggiungi sezione"
+  const addSections = async (labels, remember = false) => {
+    await page.getByRole('button', { name: '+ Aggiungi sezione' }).click();
+    const dlg = page.locator('dialog.modal');
+    await dlg.waitFor();
+    for (const l of labels) await dlg.locator('.module-option', { hasText: l }).locator('input').check();
+    if (remember) await dlg.getByText('Ricorda queste sezioni').click();
+    await dlg.getByRole('button', { name: 'Aggiungi', exact: true }).click();
+    await dlg.waitFor({ state: 'detached' });
+  };
+  const moduleOrder = () => page.locator('section.module').evaluateAll((els) => els.map((e) => e.dataset.module));
+
+  await step('nuova seduta: parte VUOTA con il solo Programma; esercizi con "+"; sezioni aggiunte, spostate e tolte', async () => {
     await page.getByRole('link', { name: 'Schede' }).click();
     await page.getByRole('button', { name: '+ Nuovo allenamento' }).first().click();
     await page.waitForURL(/#\/seduta\/.+\/foglio$/);
     sessionUrl = page.url();
-    await page.locator('.t-plan .tr:not(.th)').first().waitFor();
-    assert.equal(await page.locator('.t-plan .tr:not(.th)').count(), 5, '5 righe come l\'originale');
+    await page.getByText('Ancora nessun esercizio').waitFor();
+    assert.equal(await page.locator('.t-plan .tr:not(.th)').count(), 0, 'nessuna riga prefissata');
+    assert.deepEqual(await moduleOrder(), ['program'], 'solo il Programma');
+    await shot('05b-seduta-nuova-vuota');
     await page.getByLabel('Data allenamento').fill('2026-11-24');
     await page.locator('.cats').getByRole('button', { name: 'U8', exact: true }).click();
+    for (let i = 0; i < 5; i++) await page.getByRole('button', { name: '+ Aggiungi esercizio' }).click();
+    assert.equal(await page.locator('.t-plan .tr:not(.th)').count(), 5);
     await page.getByLabel('Nome esercizio 1').fill('Fulmine');
     await page.getByLabel('Durata in minuti').nth(0).fill('15');
     await page.getByLabel('Durata in minuti').nth(1).fill('10');
@@ -114,23 +130,33 @@ try {
     await tag.fill('avanti');
     await tag.press('Enter');
     await page.locator('.table-foot .total').getByText('25 min').waitFor();
+    // sezioni: foglio di scelta con descrizioni
+    await addSections(['Bilancio della seduta', 'Errori e cause', 'Autovalutazione', 'Preparatore atletico']);
+    assert.deepEqual(await moduleOrder(), ['program', 'review', 'errors', 'selfeval', 'trainer']);
     // bilancio generato dagli esercizi
     assert.equal(await page.locator('.t-review .tr:not(.th)').count(), 5);
     await page.getByLabel('Complessivamente').first().fill('Buona partecipazione');
     await page.locator('.t-review .name-chips').first().getByRole('button', { name: 'Giulia' }).click();
     await page.keyboard.type('timida all\'inizio');
-    // errori e cause: Sì/No grandi + nota
-    const q1 = page.locator('#sez-errori .qa').first();
+    const q1 = page.locator('#mod-errors .qa').first();
     await q1.getByRole('radio', { name: 'No', exact: true }).click();
     await q1.getByRole('textbox').fill('consegne chiare');
-    await page.locator('#sez-errori .qa').nth(1).getByRole('radio', { name: 'Sì', exact: true }).click();
+    await page.locator('#mod-errors .qa').nth(1).getByRole('radio', { name: 'Sì', exact: true }).click();
     await page.getByRole('radio', { name: /2 — centrato sul pallone \+ sostegno vicino/ }).click();
-    await page.locator('#sez-auto .qa').getByRole('radio', { name: 'Sì', exact: true }).click();
+    await page.locator('#mod-selfeval .qa').getByRole('radio', { name: 'Sì', exact: true }).click();
     await page.getByPlaceholder('io / nome di un altro allenatore').fill('Marco (vice)');
     await page.getByRole('radio', { name: 'Sufficiente', exact: true }).click();
     await page.getByLabel('Numero di sollecitazioni').fill('24');
     await page.getByRole('radio', { name: 'Adeguato', exact: true }).click();
-    // riordino: sposta giù il primo esercizio e torna su
+    // riordino delle sezioni
+    await page.getByRole('button', { name: 'Sposta su la sezione Preparatore atletico' }).click();
+    assert.deepEqual(await moduleOrder(), ['program', 'review', 'errors', 'trainer', 'selfeval']);
+    await page.getByRole('button', { name: 'Sposta giù la sezione Preparatore atletico' }).click();
+    // una sezione vuota tolta sparisce senza domande; una con dati chiede conferma
+    await addSections(['Presenze']);
+    await page.getByRole('button', { name: 'Togli la sezione Presenze' }).click();
+    assert.ok(!(await moduleOrder()).includes('attendance'));
+    // riordino esercizi
     await page.getByRole('button', { name: 'Sposta giù esercizio 1' }).click();
     assert.equal(await page.getByLabel('Nome esercizio 2').inputValue(), 'Fulmine');
     await page.getByRole('button', { name: 'Sposta su esercizio 2' }).click();
@@ -141,9 +167,9 @@ try {
     assert.equal(await page.locator('.t-plan .tr:not(.th)').count(), 5);
     await settle();
     await shot('06-foglio-programma');
-    await page.locator('#sez-bilancio').scrollIntoViewIfNeeded();
+    await page.locator('#mod-review').scrollIntoViewIfNeeded();
     await shot('07-foglio-bilancio');
-    await page.locator('#sez-preparatore').scrollIntoViewIfNeeded();
+    await page.locator('#mod-trainer').scrollIntoViewIfNeeded();
     await shot('08-foglio-autovalutazione-preparatore');
   });
 
@@ -215,7 +241,8 @@ try {
     await page.locator('.table-foot .total').getByText('25 min').waitFor();
     assert.equal(await page.locator('.t-plan img.thumb').count(), 1);
     assert.match(await page.getByLabel('Individualmente').first().inputValue(), /Giulia: timida/);
-    assert.equal(await page.locator('#sez-errori .qa').first().getByRole('radio', { name: 'No', exact: true }).getAttribute('aria-checked'), 'true');
+    assert.equal(await page.locator('#mod-errors .qa').first().getByRole('radio', { name: 'No', exact: true }).getAttribute('aria-checked'), 'true');
+    assert.deepEqual(await moduleOrder(), ['program', 'review', 'errors', 'selfeval', 'trainer'], 'sezioni e ordine salvati');
     assert.equal(await page.getByRole('radio', { name: 'Sufficiente', exact: true }).getAttribute('aria-checked'), 'true');
     assert.equal(await page.getByLabel('Numero di sollecitazioni').inputValue(), '24');
     // riapertura del disegno vettoriale
@@ -226,16 +253,14 @@ try {
     await page.locator('.board-overlay').waitFor({ state: 'detached' });
   });
 
-  await step('scheda di allenamento (osservazione): presenze, totale, copia dal foglio', async () => {
-    await page.getByRole('link', { name: 'Scheda di allenamento (osservazione)' }).click();
-    await page.waitForURL(/osservazione$/);
-    await page.locator('.t-obs .tr:not(.th)').first().waitFor();
-    assert.equal(await page.locator('.t-obs .tr:not(.th)').count(), 4, '4 righe come l\'originale');
+  await step('sezioni Presenze e Osservazione esercizi (partono dagli esercizi del programma); "Ricorda queste sezioni"', async () => {
+    await addSections(['Presenze', 'Osservazione esercizi'], true);
+    await page.locator('#mod-observation .t-obs .tr:not(.th)').first().waitFor();
+    assert.equal(await page.locator('.t-obs .tr:not(.th)').count(), 2, 'una riga per esercizio con nome');
+    assert.equal(await page.getByLabel('Esercizio osservato 1').inputValue(), 'Fulmine');
     await page.getByLabel('Presenti U6').fill('4');
     for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'più uno U8' }).click();
     await page.locator('.att-item.total').getByText('7').waitFor();
-    await page.getByRole('button', { name: '⇩ Copia esercizi dal foglio allenamento' }).click();
-    assert.equal(await page.getByLabel('Nome esercizio 1').inputValue(), 'Fulmine');
     await page.getByLabel('Positivo').first().fill('Tutti hanno corso verso la meta');
     await page.getByLabel('Negativo').first().fill('Passaggi in avanti');
     await settle();
@@ -243,23 +268,56 @@ try {
     await reload();
     assert.equal(await page.getByLabel('Positivo').first().inputValue(), 'Tutti hanno corso verso la meta');
     await page.locator('.att-item.total').getByText('7').waitFor();
+    // togliere una sezione con dati chiede conferma (dialog dell'app, Esc = annulla)
+    await page.getByRole('button', { name: 'Togli la sezione Presenze' }).click();
+    await page.locator('dialog.modal').getByText('Togliere la sezione').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('dialog.modal').waitFor({ state: 'detached' });
+    assert.ok((await moduleOrder()).includes('attendance'), 'Esc annulla');
+    // le sezioni ricordate valgono per il prossimo allenamento; si torna al solo Programma da Impostazioni
+    await page.goto(BASE + '#/'); await ready();
+    await page.getByRole('button', { name: '+ Nuovo allenamento' }).first().click();
+    await page.waitForURL(/#\/seduta\//);
+    await page.locator('section.module').first().waitFor();
+    assert.equal((await moduleOrder()).length, 7, 'sezioni ricordate');
+    // voce semplice in Impostazioni (fuori da Avanzate): mostra le sezioni ricordate e si toglie in un tocco
+    await page.goto(BASE + '#/impostazioni'); await ready();
+    const secCard = page.locator('section#sezioni');
+    await secCard.getByRole('heading', { name: 'Sezioni della seduta' }).waitFor();
+    assert.ok(await secCard.locator('input[value="attendance"]').isChecked(), 'Presenze ricordata');
+    await secCard.locator('label.module-option', { hasText: 'Presenze' }).click();
+    await page.locator('section#sezioni input[value="attendance"]:not(:checked)').waitFor();
+    assert.equal((await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('rugby-coach'); r.onsuccess = () => { const g = r.result.transaction('settings').objectStore('settings').get('prefs'); g.onsuccess = () => res(g.result.value.defaultModules); }; }))).includes('attendance'), false);
+    await page.locator('section#sezioni').getByRole('button', { name: 'Torna al solo Programma' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('section#sezioni input:checked').length === 1, null, { timeout: 5000 }); // solo Programma
+    assert.equal(await page.locator('section#sezioni').getByRole('button', { name: 'Torna al solo Programma' }).count(), 0);
+    // elimina l'allenamento di prova (senza Drive collegato: solo dal telefono)
+    await page.goto(BASE + '#/'); await ready();
+    await page.locator('.rec-card').nth(1).waitFor();
+    await settle(300);
+    const n0 = await page.locator('.rec-card').count();
+    const card = page.locator('.rec-card').filter({ hasNotText: '24/11/2026' }).first();
+    await card.getByRole('button', { name: 'Altre azioni' }).click();
+    await card.getByRole('button', { name: '🗑 Elimina' }).click();
+    await page.locator('dialog.modal').getByText('eliminare definitivamente dal telefono?').waitFor();
+    await page.locator('dialog.modal').getByRole('button', { name: 'Elimina' }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('.rec-card').length === n - 1, n0);
+    await page.goto(sessionUrl); await ready();
   });
 
   await step('Condividi (Web Share con file) e Scarica Word dal menu Altro', async () => {
-    await page.getByRole('link', { name: 'Foglio allenamento', exact: true }).click();
     await page.getByRole('button', { name: '↗ Condividi' }).click();
     await page.waitForFunction(() => window.__shared.length === 1, null, { timeout: 10000 });
     const shared = await page.evaluate(() => window.__shared[0]);
-    assert.deepEqual(shared.map((f) => f.name).sort(), ['2026-11-24 Allenamento U8.docx', '2026-11-24 Scheda di allenamento U8.docx']);
+    assert.deepEqual(shared.map((f) => f.name), ['2026-11-24 Allenamento U8.docx'], 'un solo documento con tutte le sezioni');
     assert.ok(shared.every((f) => f.type.includes('wordprocessingml') && f.size > 3000));
     const downloads = [];
     page.on('download', (d) => downloads.push(d));
     await page.getByRole('button', { name: 'Altre azioni' }).click();
     await page.getByRole('button', { name: '⬇ Scarica Word' }).click();
     await page.waitForTimeout(2500);
-    assert.ok(downloads.length >= 2, 'foglio + osservazione: ' + downloads.length);
-    const names = downloads.map((d) => d.suggestedFilename()).sort();
-    assert.deepEqual(names, ['2026-11-24 Allenamento U8.docx', '2026-11-24 Scheda di allenamento U8.docx']);
+    assert.equal(downloads.length, 1);
+    assert.deepEqual(downloads.map((d) => d.suggestedFilename()), ['2026-11-24 Allenamento U8.docx']);
     const dir = path.join(ROOT, 'out', 'e2e-docx');
     fs.mkdirSync(dir, { recursive: true });
     for (const d of downloads) await d.saveAs(path.join(dir, d.suggestedFilename()));
@@ -271,7 +329,9 @@ try {
     await page.getByRole('button', { name: '+ Nuova partita' }).first().click();
     await page.waitForURL(/#\/partita\//);
     await page.locator('.t-match .tr.totals').waitFor();
-    assert.equal(await page.locator('.t-match .tr:not(.th):not(.totals)').count(), 6);
+    assert.equal(await page.locator('.t-match .tr:not(.th):not(.totals)').count(), 1, 'una riga minima');
+    await page.getByRole('button', { name: '+ Aggiungi riga' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.t-match .tr:not(.th):not(.totals)').length === 2);
     await page.getByLabel('Data partita').fill('2026-11-22');
     await page.getByLabel('Contro').fill('Rugby Club Esempio');
     await page.getByLabel('Under').selectOption('U8');
@@ -423,6 +483,70 @@ try {
     await page.goto(BASE + '#/'); await ready();
     await page.locator('.rec-card').first().getByRole('button', { name: 'Altre azioni' }).click();
     await shot('22-telefono-menu-scheda');
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  await step('PC (1366×768, 1440×900, 1920×1080): barra in alto, spazio usato, dialog con tastiera, Tactic Board col mouse', async () => {
+    const pages = { home: '#/', allenamento: sessionUrl.replace(BASE, ''), partite: '#/?t=partite', libreria: '#/libreria', impostazioni: '#/impostazioni', aiuto: '#/info' };
+    for (const [w, hgt] of [[1366, 768], [1440, 900], [1920, 1080]]) {
+      await page.setViewportSize({ width: w, height: hgt });
+      for (const [name, url] of Object.entries(pages)) {
+        await page.goto(BASE + url); await ready(); await settle(300);
+        const hs = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+        assert.ok(hs <= 1, `scorrimento orizzontale in ${name} (${w}px): ${hs}px`);
+        assert.ok(await page.locator('.app-bar .main-nav').isVisible(), 'navigazione in alto su PC');
+        assert.equal(await page.locator('.bottom-nav').isVisible(), false, 'niente barra in basso su PC');
+        if (w !== 1366 || ['home', 'allenamento'].includes(name)) await shot(`40-pc-${w}-${name}`);
+      }
+      // elenco: più colonne di schede, non una colonna stirata
+      await page.goto(BASE + '#/?t=partite'); await ready();
+      const main = await page.locator('main').boundingBox();
+      assert.ok(main.width <= 1700, 'larghezza contenuta su schermi grandi');
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // dialog con la tastiera: Tab porta alle scelte, Spazio seleziona, Esc chiude
+    await page.goto(sessionUrl); await ready();
+    await page.getByRole('button', { name: 'Togli la sezione Presenze' }).click();
+    await page.locator('dialog.modal').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Annulla', 'fuoco sul pulsante sicuro');
+    await page.keyboard.press('Enter');
+    await page.locator('dialog.modal').waitFor({ state: 'detached' });
+    assert.ok((await moduleOrder()).includes('attendance'), 'Invio su Annulla non toglie la sezione');
+    await page.getByRole('button', { name: 'Togli la sezione Presenze' }).click();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Togli sezione');
+    await page.keyboard.press('Enter');
+    await page.locator('dialog.modal').waitFor({ state: 'detached' });
+    assert.ok(!(await moduleOrder()).includes('attendance'), 'Tab + Invio conferma');
+    await page.getByRole('button', { name: '+ Aggiungi sezione' }).click();
+    await page.locator('dialog.modal').waitFor();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.type), 'checkbox');
+    await page.keyboard.press('Space');
+    await shot('41-pc-aggiungi-sezione');
+    await page.keyboard.press('Escape');
+    await page.locator('dialog.modal').waitFor({ state: 'detached' });
+    assert.ok(!(await moduleOrder()).includes('attendance'), 'Esc non aggiunge nulla');
+    // menu ⋯ col mouse
+    await page.getByRole('button', { name: 'Altre azioni' }).click();
+    await page.getByRole('button', { name: '🖶 Stampa' }).waitFor();
+    await page.mouse.click(5, 300);
+    // Tactic Board col mouse: trascinamento di una pedina
+    await page.locator('.t-plan .thumb-btn').first().click();
+    const svg = page.locator('.board-svg');
+    await svg.waitFor();
+    const pl = page.locator('.board-svg .bi-player').first();
+    const b0 = await pl.boundingBox();
+    await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b0.x + b0.width / 2 + 120, b0.y + b0.height / 2 + 40, { steps: 10 });
+    await page.mouse.up();
+    const b1 = await page.locator('.board-svg .bi-player').first().boundingBox();
+    assert.ok(Math.abs(b1.x - b0.x) > 60, 'pedina trascinata col mouse');
+    await shot('42-pc-tactic-board');
+    await page.keyboard.press('Control+z');
+    await page.getByRole('button', { name: '✕ Chiudi' }).click();
+    if (await page.locator('dialog.modal').count()) await page.locator('dialog.modal').getByRole('button', { name: 'Chiudi senza salvare' }).click();
     await page.setViewportSize({ width: 1280, height: 800 });
   });
 

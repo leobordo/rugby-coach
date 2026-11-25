@@ -3,33 +3,85 @@ import assert from 'node:assert/strict';
 import * as M from '../app/js/model.js';
 import { buildSeed, SEED_GAMES } from '../app/js/seed.js';
 import { sampleSession } from './fixtures.mjs';
+const { resolveDeletions } = M;
 
-test('valori predefiniti delle liste = righe degli originali (R4)', () => {
+test('liste che partono vuote (si aggiunge con +) e seduta con il solo modulo Programma', () => {
   const s = M.newSession();
-  assert.equal(s.planItems.length, 5);
-  assert.equal(s.observations.length, 4);
-  assert.equal(s.review.perExercise.length, 5, 'bilancio generato dagli esercizi');
+  assert.equal(s.planItems.length, 0);
+  assert.equal(s.observations.length, 0);
+  assert.equal(s.review.perExercise.length, 0);
+  assert.deepEqual(s.modules, ['program']);
   assert.equal(s.review.errorsCauses.length, 7);
   assert.deepEqual(Object.keys(s.attendance), ['U6', 'U8', 'U10', 'U12', 'U14', 'U16']);
   const m = M.newMatch();
-  assert.equal(m.rows.length, 6);
+  assert.equal(m.rows.length, 1, 'partita: una riga minima');
   assert.equal(m.rows[0].values.length, 8);
   assert.equal(M.MATCH_COLUMNS.length, 7);
+  assert.deepEqual(M.templatePlanSession().blocks.find((b) => b.type === 'RISCALDAMENTO').subItems, []);
+  s.planItems.push(M.newPlanItem({ name: 'Fulmine' }));
+  M.syncReviewRows(s);
+  assert.equal(s.review.perExercise.length, 1, 'bilancio: una riga per esercizio');
+});
+
+test('moduli: dati presenti, svuotamento, sanificazione', () => {
+  const s = M.newSession();
+  assert.equal(M.moduleHasData(s, 'attendance'), false);
+  s.attendance.U8 = 7;
+  assert.equal(M.moduleHasData(s, 'attendance'), true);
+  M.clearModule(s, 'attendance');
+  assert.equal(M.totalAttendance(s), 0);
+  s.review.errorsCauses[2].answer = 'yes';
+  assert.equal(M.moduleHasData(s, 'errors'), true);
+  M.clearModule(s, 'errors');
+  assert.equal(M.moduleHasData(s, 'errors'), false);
+  s.review.trainer = 'Paolo';
+  assert.equal(M.moduleHasData(s, 'trainer'), true);
+  assert.deepEqual(M.sanitizeModules(['trainer', 'virus', 'trainer', 'program']), ['trainer', 'program']);
+  assert.deepEqual(M.sanitizeModules([]), ['program']);
+});
+
+test('migrazione v2 -> v3: moduli = Programma + quelli con dati; righe vuote tolte; nessun dato perso', () => {
+  const p1 = { id: 'p1', name: 'Fulmine', durationMin: 10 };
+  const p2 = { id: 'p2', name: '' }; // riga vuota dei vecchi 5 fissi
+  const v2 = { kind: 'session', schemaVersion: 2, id: 's', date: '2026-10-01', updatedAt: '2026-10-01T10:00:00Z',
+    attendance: { U6: null, U8: 9, U10: null, U12: null, U14: null, U16: null },
+    planItems: [p1, p2, { id: 'p3' }],
+    observations: [{ id: 'o1', name: 'Fulmine', positive: 'bene' }, { id: 'o2' }, { id: 'o3' }, { id: 'o4' }],
+    review: { perExercise: [{ id: 'r1', ref: 'p1', overall: 'ok' }, { id: 'r2', ref: 'p2' }, { id: 'r3', ref: 'p3' }],
+      errorsCauses: [], observationLevel: null, errorsCorrectedWell: null, observer: '', workTimeRatio: 'suff' } };
+  const s = M.migrateRecord(v2);
+  assert.equal(s.schemaVersion, 3);
+  assert.deepEqual(s.modules, ['program', 'attendance', 'observation', 'review', 'trainer']);
+  assert.deepEqual(s.planItems.map((p) => p.name), ['Fulmine']);
+  assert.equal(s.observations.length, 1);
+  assert.equal(s.observations[0].positive, 'bene');
+  assert.equal(s.review.perExercise.length, 1);
+  assert.equal(s.review.perExercise[0].overall, 'ok');
+  assert.equal(s.attendance.U8, 9);
+  assert.equal(s.review.workTimeRatio, 'suff');
+  assert.equal(s.updatedAt, '2026-10-01T10:00:00Z');
+  const empty = M.migrateRecord({ kind: 'session', schemaVersion: 2, id: 'e', planItems: [{ id: 'a' }, { id: 'b' }] });
+  assert.deepEqual(empty.modules, ['program']);
+  assert.equal(empty.planItems.length, 0);
+  const m = M.migrateRecord({ kind: 'match', schemaVersion: 2, id: 'm', rows: [{ label: 'Luca', values: [1, 0, 0, 0, 0, 0, 0, 0] }, { label: '', values: [0, 0, 0, 0, 0, 0, 0, 0] }] });
+  assert.deepEqual(m.rows.map((r) => r.label), ['Luca']);
 });
 
 test('campi calcolati: totale presenti, durata, totali partita (R8)', () => {
-  const s = M.newSession();
+  const s = M.newSession({ planItems: [M.newPlanItem(), M.newPlanItem(), M.newPlanItem()] });
   s.attendance.U6 = 3; s.attendance.U8 = '5'; s.attendance.U10 = ''; s.attendance.U12 = -2;
   assert.equal(M.totalAttendance(s), 8);
   s.planItems[0].durationMin = 10; s.planItems[1].durationMin = '15'; s.planItems[2].durationMin = null;
   assert.equal(M.totalDuration(s), 25);
   const m = M.newMatch();
+  m.rows.push(M.newMatchRow());
   m.rows[0].values[0] = 2; m.rows[1].values[0] = 3; m.rows[1].values[7] = 1;
   assert.deepEqual(M.matchColumnTotals(m), [5, 0, 0, 0, 0, 0, 0, 1]);
 });
 
 test('righe del bilancio seguono gli esercizi (aggiunta, rimozione, riordino) e conservano le righe libere', () => {
-  const s = M.newSession();
+  const s = M.newSession({ planItems: Array.from({ length: 5 }, () => M.newPlanItem()) });
+  M.syncReviewRows(s);
   s.review.perExercise[1].overall = 'secondo';
   s.review.perExercise.push(M.newReviewRow({ label: 'libera', overall: 'x' }));
   const second = s.planItems[1].id;
@@ -85,8 +137,9 @@ test('da una seduta del piano nasce un foglio allenamento precompilato (R3)', ()
   assert.deepEqual(s.categories, ['U8']);
   assert.deepEqual(s.termPlanRef, { termPlanId: plan.id, sessionIndex: 0 });
   assert.equal(s.review.perExercise.length, 4);
-  assert.equal(s.observations.length, 4);
-  assert.equal(s.observations[1].planItemRef, s.planItems[1].id);
+  assert.equal(s.observations.length, 0, 'osservazione: modulo non presente di default');
+  const s2 = M.sessionFromPlanSession(plan, 0, exercises, { modules: ['program', 'observation'] });
+  assert.equal(s2.observations[1].planItemRef, s2.planItems[1].id);
 });
 
 test('migrazione v1 -> v2: chiavi presenze dell\'originale, righe partita a 7 colonne, keywords stringa', () => {
@@ -179,4 +232,23 @@ test('seed: id e date stabili (stesso esempio = stesso id su ogni dispositivo, p
 test('nomi dei file delle raccolte', () => {
   assert.equal(M.fileBaseName({ kind: 'library' }), 'Rugby Coach - Libreria esercizi');
   assert.equal(M.fileBaseName({ kind: 'roster' }), 'Rugby Coach - Rosa giocatori');
+});
+
+test('eliminazioni tra telefoni: vince l\'evento più recente (modifica dopo eliminazione / eliminazione dopo modifica / offline)', () => {
+  const del = '2026-11-25T10:00:00.000Z';
+  // B ha modificato DOPO l'eliminazione di A: la modifica vince, la tombstone è superata
+  let r = resolveDeletions({ remoteTombs: { s: del }, updatedOf: () => '2026-11-25T10:05:00.000Z' });
+  assert.deepEqual(r.revive, ['s']); assert.deepEqual(r.remove, []);
+  assert.equal(r.tombs.s, undefined); assert.equal(r.alive.s, '2026-11-25T10:05:00.000Z');
+  // A (che la scheda non l'ha più) riceve l'indice di B: la sua tombstone locale non torna
+  const a = resolveDeletions({ localTombs: { s: del }, remoteAlive: r.alive, updatedOf: () => null });
+  assert.equal(a.tombs.s, undefined);
+  // B offline aveva modificato PRIMA dell'eliminazione e sincronizza dopo: decide updatedAt -> si toglie in locale
+  r = resolveDeletions({ remoteTombs: { s: del }, updatedOf: () => '2026-11-25T09:59:00.000Z' });
+  assert.deepEqual(r.remove, ['s']); assert.deepEqual(r.revive, []); assert.equal(r.tombs.s, del);
+  // stessa ora: vince l'eliminazione
+  assert.deepEqual(resolveDeletions({ remoteTombs: { s: del }, updatedOf: () => del }).remove, ['s']);
+  // eliminata di nuovo dopo la modifica che l'aveva salvata: l'eliminazione più recente vince
+  r = resolveDeletions({ localTombs: { s: '2026-11-25T11:00:00.000Z' }, remoteAlive: { s: '2026-11-25T10:05:00.000Z' }, updatedOf: () => '2026-11-25T10:05:00.000Z' });
+  assert.deepEqual(r.remove, ['s']); assert.equal(r.tombs.s, '2026-11-25T11:00:00.000Z');
 });

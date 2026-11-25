@@ -9,13 +9,19 @@ export const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { 
 let db = null;
 let dirtyHook = null;
 let forgetHook = null;
+let deleteHook = null;
+
+// copia in memoria delle impostazioni (lettura sincrona per le pagine che devono comparire subito)
+const settingsCache = new Map();
 
 export async function initRepo(idb) {
   db = await openDB(idb);
+  try { for (const r of await db.getAll('settings')) settingsCache.set(r.key, r.value); } catch { /* facoltativo */ }
   return db;
 }
+export function peekSetting(key, def = null) { return settingsCache.has(key) ? settingsCache.get(key) : def; }
 export function getDB() { return db; }
-export function setSyncHooks({ onDirty, onForget }) { dirtyHook = onDirty; forgetHook = onForget; }
+export function setSyncHooks({ onDirty, onForget, onDelete }) { dirtyHook = onDirty; forgetHook = onForget; deleteHook = onDelete; }
 
 export async function list(kind) {
   const all = await db.getAll(STORE_OF_KIND[kind]);
@@ -49,21 +55,36 @@ export async function setTombstones(kind, tombs) {
   await setSetting('tombstones', { ...all, [kind]: tombs });
 }
 
+// Elimina dal telefono e (se collegato) da Google Drive: le schede vanno nella coda di eliminazione (i loro file
+// finiranno nel cestino di Drive) e ricevono una tombstone, così non "resuscitano" dal recupero su altri telefoni.
+// Esercizi e giocatori: tombstone + la raccolta (libreria / rosa) viene rigenerata senza l'elemento.
 export async function remove(kind, id) {
   await db.delete(STORE_OF_KIND[kind], id);
-  if (COLLECTION_OF_KIND[kind]) await setTombstones(kind, { ...(await getTombstones(kind)), [id]: nowISO() });
-  if (forgetHook && SYNCABLE_KINDS.includes(kind)) await forgetHook(kind, id);
+  if (COLLECTION_OF_KIND[kind] || SYNCABLE_KINDS.includes(kind)) await setTombstones(kind, { ...(await getTombstones(kind)), [id]: nowISO() });
+  if (SYNCABLE_KINDS.includes(kind)) {
+    if (deleteHook) await deleteHook(kind, id);
+    else if (forgetHook) await forgetHook(kind, id);
+  }
   if (dirtyHook && COLLECTION_OF_KIND[kind]) await dirtyHook(COLLECTION_OF_KIND[kind], 'all');
+  emit('removed', { kind, id });
+}
+
+// Eliminazione arrivata da un altro telefono (tombstone remota): solo in locale, senza rimettere nulla in coda
+export async function removeLocalOnly(kind, id) {
+  await db.delete(STORE_OF_KIND[kind], id);
+  if (forgetHook && SYNCABLE_KINDS.includes(kind)) await forgetHook(kind, id);
   emit('removed', { kind, id });
 }
 
 export async function getSetting(key, def = null) {
   const r = await db.get('settings', key);
+  if (r) settingsCache.set(key, r.value);
   return r ? r.value : def;
 }
 
 export async function setSetting(key, value) {
   await db.put('settings', { key, value });
+  settingsCache.set(key, value);
   emit('settings', { key, value });
 }
 

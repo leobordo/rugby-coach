@@ -39,26 +39,39 @@ test('PNG: lettura dimensioni e data URL', () => {
   assert.equal(pngSize(new Uint8Array([1, 2, 3])), null);
 });
 
-test('Foglio allenamento + Scheda di allenamento (.docx A4 orizzontale, tabelle, disegni)', async () => {
+test('Seduta con tutti i moduli: UN solo .docx A4 orizzontale con tabelle e disegni', async () => {
   const s = sampleSession();
   const files = await writeDocs(s, 'seduta');
-  assert.deepEqual(files.map((f) => f.key), ['docx-plan', 'docx-observation']);
+  assert.deepEqual(files.map((f) => f.key), ['docx-plan'], 'un solo documento per seduta');
   assert.equal(files[0].name, '2026-11-24 Allenamento U8.docx');
-  assert.equal(files[1].name, '2026-11-24 Scheda di allenamento U8.docx');
-  const plan = unzipText(files[0].path, 'word/document.xml');
-  assert.match(plan, /w:orient="landscape"/);
+  const xml = unzipText(files[0].path, 'word/document.xml');
+  assert.match(xml, /w:orient="landscape"/);
   for (const t of ['ESERCIZIO E DURATA', 'MATERIALE', 'OBIETTIVI', 'PAROLE', 'COSA OSSERVO', 'BILANCIO DELLA SEDUTA', 'ERRORI E CAUSE',
-    'Consegne iniziali poco chiare?', 'Ho fatto domande?', 'centrato sul pallone e sullo spazio', 'Con preparatore atletico', 'Fulmine', 'Durata totale', '70 min', 'Marco (vice)', 'Paolo', '24/11/2026']) {
-    assert.ok(plan.includes(t), 'manca nel foglio: ' + t);
+    'Consegne iniziali poco chiare?', 'Ho fatto domande?', 'centrato sul pallone e sullo spazio', 'Con preparatore atletico', 'Fulmine', 'Durata totale', '70 min', 'Marco (vice)', 'Paolo', '24/11/2026',
+    'N.U6', 'N.U16', 'TOT. 15', 'OBIETTIVO', 'POSITIVO', 'NEGATIVO', 'MIGLIORAMENTI DA', 'Tutti hanno corso']) {
+    assert.ok(xml.includes(t), 'manca: ' + t);
   }
-  assert.equal((plan.match(/<w:tbl>/g) || []).length >= 3, true, 'programma + bilancio (con tabella annidata) + sezioni D/E');
   assert.ok(unzipList(files[0].path).some((f) => f.startsWith('word/media/')), 'disegni incorporati come immagini');
-  const obs = unzipText(files[1].path, 'word/document.xml');
-  for (const t of ['ALLENAMENTO DEL', 'N.U6', 'N.U16', 'TOT. 15', 'OBIETTIVO', 'POSITIVO', 'NEGATIVO', 'MIGLIORAMENTI DA', 'Tutti hanno corso']) {
-    assert.ok(obs.includes(t), 'manca nella scheda: ' + t);
-  }
-  assert.match(obs, /w:orient="landscape"/);
   results.seduta = files.map((f) => f.path);
+});
+
+test('Seduta con il solo Programma: nel .docx non ci sono le altre sezioni; l\'ordine dei moduli è rispettato', async () => {
+  const s = sampleSession();
+  s.modules = ['program'];
+  const [f] = await writeDocs(s, 'seduta-solo-programma');
+  const xml = unzipText(f.path, 'word/document.xml');
+  assert.ok(xml.includes('ESERCIZIO E DURATA') && xml.includes('Fulmine'));
+  for (const t of ['BILANCIO DELLA SEDUTA', 'ERRORI E CAUSE', 'POSITIVO', 'Con preparatore atletico', 'N.U6', 'centrato sul pallone']) assert.ok(!xml.includes(t), 'non deve esserci: ' + t);
+  s.modules = ['trainer', 'program', 'errors'];
+  const [g] = await writeDocs(s, 'seduta-ordine');
+  const x2 = unzipText(g.path, 'word/document.xml');
+  const iT = x2.indexOf('Con preparatore atletico'), iP = x2.indexOf('ESERCIZIO E DURATA'), iE = x2.indexOf('ERRORI E CAUSE');
+  assert.ok(iT > 0 && iT < iP && iP < iE, 'ordine scelto: preparatore, programma, errori');
+  assert.ok(!x2.includes('BILANCIO DELLA SEDUTA'));
+  // seduta nuova senza esercizi: tabella del programma con una riga vuota da compilare a mano
+  const [h] = await writeDocs(M.newSession({ date: '2026-12-01' }), 'seduta-vuota');
+  assert.ok(unzipText(h.path, 'word/document.xml').includes('ESERCIZIO E DURATA'));
+  results.seduta.push(f.path, g.path);
 });
 
 test('Scheda della partita (.docx A4 orizzontale, 8 colonne + etichetta riga, note, NUM. GIOCATORI)', async () => {
@@ -88,7 +101,7 @@ test('Obiettivi / piano trimestrale (.docx A4 verticale, 8 sedute)', async () =>
 test('artefatti per Drive: .docx + .json di backup ri-importabile', async () => {
   const s = M.newSession({ date: '2026-11-24', categories: ['U8'] });
   const arts = await buildArtifacts(docx, s);
-  assert.deepEqual(arts.map((a) => a.key), ['docx-plan', 'json'], 'scheda di osservazione vuota -> nessun docx in più');
+  assert.deepEqual(arts.map((a) => a.key), ['docx-plan', 'json'], 'un .docx + il .json');
   const back = M.parseBackup(arts[1].data);
   assert.equal(back[0].id, s.id);
   assert.equal(arts[1].name, '2026-11-24 Allenamento U8.json');

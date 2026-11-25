@@ -2,7 +2,7 @@
 import { h, clear, textInput, numberInput, textArea, tagInput, categoryPicker, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, newExercise, duplicateRecord, normName } from '../model.js';
-import { autosaver, pageHeader, drawingCell, shareButton } from './common.js';
+import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete } from './common.js';
 import { safeThumb } from '../board/model.js';
 
 export async function libraryView(root, params, query) {
@@ -44,7 +44,7 @@ export async function exerciseView(root, { id }) {
   root.append(pageHeader(e.name || 'Nuovo esercizio', { back: '#/libreria', actions: [saver.pill,
     h('button.btn', { type: 'button', on: { click: async () => { saver.flush(); const d = duplicateRecord(e); await repo.save(d); location.hash = '#/esercizio/' + d.id; } } }, 'Duplica'),
     h('button.btn.danger', { type: 'button', on: { click: async () => {
-      if (!(await confirmDialog(`Eliminare "${e.name}" dalla libreria? Le sedute che lo usano conservano la loro copia.`, { okText: 'Elimina', danger: true }))) return;
+      if (!(await confirmDelete(`Esercizio "${e.name || 'senza nome'}"`))) return;
       saver.dispose(); await repo.remove('exercise', e.id); toast('Esercizio eliminato.', 'ok'); location.hash = '#/libreria';
     } } }, 'Elimina')] }),
   h('div.sheet.exercise-form',

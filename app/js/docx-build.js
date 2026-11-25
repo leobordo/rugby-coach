@@ -3,7 +3,7 @@
 import {
   formatDateIT, totalAttendance, totalDuration, matchColumnTotals, matchColumnLabels, reviewRowLabel,
   CATEGORIES, OBSERVATION_LEVELS, ERRORS_CORRECTED_LABEL, WORK_TIME_OPTIONS, SOLICITATION_OPTIONS,
-  BLOCK_TYPES, ordinalRoman, normalizeUnder, sortCategories, toInt,
+  BLOCK_TYPES, ordinalRoman, normalizeUnder, sortCategories, toInt, sanitizeModules,
 } from './model.js';
 
 const CM = 567; // twip per cm
@@ -131,92 +131,107 @@ export function createBuilder(docx, ctx = {}) {
 
   const textCell = (text, width, o = {}) => cell(text ? [P(text, { size: o.size || 18 })] : [], width);
 
-  // ---------------- 1.1 Scheda di allenamento (osservazione) ----------------
-  function sessionObservation(s) {
-    const margins = { top: 227, bottom: 227, left: 227, right: 227 };
-    const att = s.attendance || {};
-    const H = { font: SANS, size: 22, bold: true, italics: true };
-    const head = [R('ALLENAMENTO DEL', H), R(' ' + (formatDateIT(s.date) || '________________') + ' ', { ...H, underline: true })];
-    for (const c of CATEGORIES) {
-      head.push(R(' N.' + c, H));
-      head.push(R(' ' + (att[c] === null || att[c] === undefined || att[c] === '' ? '____' : String(att[c])) + ' ', { ...H, underline: true }));
-    }
-    const tot = totalAttendance(s);
-    if (tot) head.push(R('   TOT. ' + tot, H));
-    const widths = scaleWidths([5.1, 5.4, 5.7, 5.7, 5.7], A4_H - 454);
-    const rows = [row(['ESERCIZIO', 'OBIETTIVO', 'COSA OSSERVO\nPOSITIVO', 'COSA OSSERVO\nNEGATIVO', 'MIGLIORAMENTI DA\nAPPORTARE']
-      .map((l, i) => headerCell(l, widths[i])), { header: true })];
-    for (const o of s.observations || []) {
-      rows.push(row([
-        exerciseCell(o, widths[0], 4.4, false),
-        textCell(o.objective, widths[1]), textCell(o.positive, widths[2]), textCell(o.negative, widths[3]), textCell(o.improvements, widths[4]),
-      ], { minHeight: Math.round(3.1 * CM) }));
-    }
-    return doc('Scheda di allenamento ' + (s.date || ''), [section([
-      P(head, { align: AlignmentType.CENTER, after: 200, before: 120 }),
-      table(rows, widths),
-    ], { landscape: true, margins })]);
-  }
-
-  // ---------------- 1.2 Foglio allenamento (programma + bilancio) ----------------
-  function sessionPlan(s) {
-    const margins = { top: 2 * CM, bottom: 2 * CM, left: Math.round(2.5 * CM), right: Math.round(2.5 * CM) };
+  // ---------------- Seduta modulare: UN documento con le sole sezioni presenti, nell'ordine scelto ----------------
+  // Ogni sezione riprende la grafica dell'originale (foglio allenamento, scheda di osservazione), A4 orizzontale.
+  function session(s) {
+    const margins = { top: Math.round(1.5 * CM), bottom: Math.round(1.5 * CM), left: Math.round(1.8 * CM), right: Math.round(1.8 * CM) };
     const usable = A4_H - margins.left - margins.right;
+    const half = Math.floor(usable / 2);
+    const mods = sanitizeModules(s.modules);
+    const rv = s.review || {};
     const children = [];
-    children.push(P([R('ALLENAMENTO DEL '), R(formatDateIT(s.date) || '___________________________', { underline: !!s.date })], { align: AlignmentType.CENTER, after: 80 }));
+
+    // intestazione: "ALLENAMENTO DEL ___" (+ presenze se il modulo c'è ed è il primo, come nella scheda originale)
+    const H = { font: SANS, size: 22, bold: true, italics: true };
+    const attendanceRuns = () => {
+      const att = s.attendance || {};
+      const out = [];
+      for (const c of CATEGORIES) {
+        out.push(R(' N.' + c, H));
+        out.push(R(' ' + (att[c] === null || att[c] === undefined || att[c] === '' ? '____' : String(att[c])) + ' ', { ...H, underline: true }));
+      }
+      const tot = totalAttendance(s);
+      if (tot) out.push(R('   TOT. ' + tot, H));
+      return out;
+    };
+    const head = [R('ALLENAMENTO DEL', H), R(' ' + (formatDateIT(s.date) || '________________') + ' ', { ...H, underline: true })];
+    const attInHead = mods[0] === 'attendance';
+    if (attInHead) head.push(...attendanceRuns());
+    children.push(P(head, { align: AlignmentType.CENTER, after: 80, before: 0 }));
     const extra = [];
     const cats = sortCategories(s.categories || []);
     if (cats.length) extra.push('Categorie: ' + cats.join(', '));
     if (s.location) extra.push('Luogo: ' + s.location);
-    if (extra.length) children.push(P(extra.join('   ·   '), { align: AlignmentType.CENTER, size: 18, italics: true, after: 80 }));
+    if (extra.length) children.push(P(extra.join('   ·   '), { align: AlignmentType.CENTER, size: 18, italics: true, after: 120 }));
 
-    // Sezione B — programma
-    const w = scaleWidths([6.9, 3.3, 5.9, 3.8, 5.6], usable);
-    const rows = [row(['ESERCIZIO E DURATA', 'MATERIALE\nE SPAZIO', 'OBIETTIVI', 'PAROLE\nCHIAVE', 'COSA OSSERVO']
-      .map((l, i) => headerCell(l, w[i])), { header: true })];
-    for (const it of s.planItems || []) {
-      rows.push(row([
-        exerciseCell(it, w[0], 6.0, true),
-        textCell(it.materialsSpace, w[1]), textCell(it.objectives, w[2]),
-        textCell((it.keywords || []).join(', '), w[3]), textCell(it.toObserve, w[4]),
-      ], { minHeight: Math.round(4.5 * CM) }));
-    }
-    children.push(table(rows, w));
-    const td = totalDuration(s);
-    children.push(P([R('Durata totale: ', { bold: true }), R(td ? td + ' min' : '—')], { align: AlignmentType.RIGHT, before: 80 }));
-
-    // Sezione C — bilancio (pagina 3)
-    const half = Math.floor(usable / 2);
-    const inner = [Math.round(2.3 * CM), Math.round((half - 2.3 * CM - 200) * 0.45), 0];
-    inner[2] = half - 200 - inner[0] - inner[1];
     const thin = { style: BorderStyle.SINGLE, size: 2, color: '999999' };
     const thinBorders = { top: thin, bottom: thin, left: thin, right: thin, insideHorizontal: thin, insideVertical: thin };
-    const innerRows = [row(['Eser.', 'Complessivamente', 'individualmente (nomi)'].map((l, i) => cell([P(l, { size: 18 })], inner[i])), { header: true })];
-    for (const r of s.review?.perExercise || []) {
-      const lab = reviewRowLabel(s, r);
-      innerRows.push(row([
-        cell([P(lab.num || '·', { size: 18, bold: true }), ...(lab.name ? [P(lab.name, { size: 14, italics: true })] : [])], inner[0]),
-        textCell(r.overall, inner[1]), textCell(r.individual, inner[2]),
-      ], { minHeight: Math.round(0.8 * CM) }));
-    }
-    const innerTable = table(innerRows, inner, { borders: thinBorders });
-    const errors = (s.review?.errorsCauses || []).map((q, i) => {
+    const blankRow = (widths, h) => row(widths.map((w) => cell([], w)), { minHeight: Math.round(h * CM) });
+
+    const programBlock = () => {
+      const w = scaleWidths([6.9, 3.3, 5.9, 3.8, 5.6], usable);
+      const rows = [row(['ESERCIZIO E DURATA', 'MATERIALE\nE SPAZIO', 'OBIETTIVI', 'PAROLE\nCHIAVE', 'COSA OSSERVO']
+        .map((l, i) => headerCell(l, w[i])), { header: true })];
+      for (const it of s.planItems || []) {
+        rows.push(row([
+          exerciseCell(it, w[0], 6.0, true),
+          textCell(it.materialsSpace, w[1]), textCell(it.objectives, w[2]),
+          textCell((it.keywords || []).join(', '), w[3]), textCell(it.toObserve, w[4]),
+        ], { minHeight: Math.round(3.5 * CM) }));
+      }
+      if (!(s.planItems || []).length) rows.push(blankRow(w, 3.5));
+      const td = totalDuration(s);
+      return [table(rows, w), P([R('Durata totale: ', { bold: true }), R(td ? td + ' min' : '—')], { align: AlignmentType.RIGHT, before: 80, after: 160 })];
+    };
+    const attendanceBlock = () => [P([R('PRESENTI ', H), ...attendanceRuns()], { align: AlignmentType.CENTER, before: 120, after: 160 })];
+    const observationBlock = () => {
+      const widths = scaleWidths([5.1, 5.4, 5.7, 5.7, 5.7], usable);
+      const rows = [row(['ESERCIZIO', 'OBIETTIVO', 'COSA OSSERVO\nPOSITIVO', 'COSA OSSERVO\nNEGATIVO', 'MIGLIORAMENTI DA\nAPPORTARE']
+        .map((l, i) => headerCell(l, widths[i])), { header: true })];
+      for (const o of s.observations || []) {
+        rows.push(row([
+          exerciseCell(o, widths[0], 4.4, false),
+          textCell(o.objective, widths[1]), textCell(o.positive, widths[2]), textCell(o.negative, widths[3]), textCell(o.improvements, widths[4]),
+        ], { minHeight: Math.round(3.1 * CM) }));
+      }
+      if (!(s.observations || []).length) rows.push(blankRow(widths, 3.1));
+      return [table(rows, widths), P('', { after: 160 })];
+    };
+    const reviewContent = (width) => {
+      const inner = [Math.round(2.3 * CM), Math.round((width - 2.3 * CM - 200) * 0.45), 0];
+      inner[2] = width - 200 - inner[0] - inner[1];
+      const innerRows = [row(['Eser.', 'Complessivamente', 'individualmente (nomi)'].map((l, i) => cell([P(l, { size: 18 })], inner[i])), { header: true })];
+      for (const r of rv.perExercise || []) {
+        const lab = reviewRowLabel(s, r);
+        innerRows.push(row([
+          cell([P(lab.num || '·', { size: 18, bold: true }), ...(lab.name ? [P(lab.name, { size: 14, italics: true })] : [])], inner[0]),
+          textCell(r.overall, inner[1]), textCell(r.individual, inner[2]),
+        ], { minHeight: Math.round(0.8 * CM) }));
+      }
+      if (!(rv.perExercise || []).length) innerRows.push(blankRow(inner, 0.8));
+      return [table(innerRows, inner, { borders: thinBorders }), P('')];
+    };
+    const errorsContent = () => (rv.errorsCauses || []).map((q, i) => {
       const parts = [R(`${i + 1}.  ${q.question}  `, { size: 18 }), R('Sì ', { size: 18 }), check(q.answer === 'yes', 20), R('  No ', { size: 18 }), check(q.answer === 'no', 20)];
       if (q.note) parts.push(R('  — ' + q.note, { size: 18, italics: true }));
       return P(parts, { after: 100 });
     });
-    children.push(P('', { pageBreakBefore: true, after: 0 }));
-    children.push(table([
-      row([headerCell('BILANCIO DELLA SEDUTA (da solo prima del briefing finale)', half, { size: 18 }),
-        headerCell('ERRORI E CAUSE (insieme agli atleti)', usable - half, { size: 18 })], { header: true }),
-      row([cell([innerTable, P('')], half), cell(errors, usable - half)], { minHeight: Math.round(5 * CM), cantSplit: false }),
-    ], [half, usable - half]));
-    children.push(P('', { after: 200 }));
-
-    // Sezioni D ed E
-    const rv = s.review || {};
+    const REVIEW_H = 'BILANCIO DELLA SEDUTA (da solo prima del briefing finale)';
+    const ERRORS_H = 'ERRORI E CAUSE (insieme agli atleti)';
+    // bilancio + errori affiancati come nell'originale (pagina 3), se consecutivi; altrimenti ognuno da solo
+    const reviewErrorsBlock = (both, first) => {
+      if (both) {
+        return [table([
+          row([headerCell(REVIEW_H, half, { size: 18 }), headerCell(ERRORS_H, usable - half, { size: 18 })], { header: true }),
+          row([cell(reviewContent(half), half), cell(errorsContent(), usable - half)], { minHeight: Math.round(5 * CM), cantSplit: false }),
+        ], [half, usable - half]), P('', { after: 200 })];
+      }
+      const title = first === 'review' ? REVIEW_H : ERRORS_H;
+      const content = first === 'review' ? reviewContent(usable) : errorsContent();
+      return [table([row([headerCell(title, usable, { size: 18 })], { header: true }), row([cell(content, usable)], { cantSplit: false })], [usable]), P('', { after: 200 })];
+    };
     const S = { font: SANS, size: 16 };
-    const left = [
+    const selfevalContent = () => [
       P([R('La seduta di allenamento', { font: SANS, size: 22, bold: true })], { indent: { left: 600 }, after: 0 }),
       P([R('x me', { font: SANS, size: 22, bold: true }), R('        ( meglio se altro mi vede)', { font: SANS, size: 16, bold: true })], { after: 0 }),
       P([R("L'osservazione", { font: SANS, size: 16, bold: true })], { after: 120 }),
@@ -224,16 +239,43 @@ export function createBuilder(docx, ctx = {}) {
       P([R('4  ', { ...S, bold: true }), R(ERRORS_CORRECTED_LABEL + '   ', S), R('Sì ', S), check(rv.errorsCorrectedWell === 'yes', 18), R('  No ', S), check(rv.errorsCorrectedWell === 'no', 18)], { after: 80 }),
       P([R('Osservatore: ', { ...S, bold: true }), R(blank(rv.observer, 20), S)]),
     ];
-    const right = [
+    const trainerContent = () => [
       P([R('Con preparatore atletico', { size: 20, bold: true })], { align: AlignmentType.CENTER, after: 160 }),
       P([R('rapporto tempo di lavoro   ', S), ...WORK_TIME_OPTIONS.flatMap((o) => [check(rv.workTimeRatio === o.value, 20), R(' ' + o.short + '   ', S)])], { after: 80 }),
       P([R('N° di sollecitazioni ', S), R(rv.solicitationsCount != null && rv.solicitationsCount !== '' ? `(${rv.solicitationsCount})   ` : '   ', { ...S, bold: true }),
         ...SOLICITATION_OPTIONS.flatMap((o) => [check(rv.solicitations === o.value, 20), R(' ' + o.short + '   ', S)])], { after: 80 }),
       P([R('Preparatore atletico: ', { ...S, bold: true }), R(blank(rv.trainer, 20), S)]),
     ];
-    children.push(table([row([cell(left, half, { borders: noBorders }), cell(right, usable - half, { borders: noBorders })])], [half, usable - half], { borders: noBorders }));
+    // autovalutazione + preparatore affiancati come nell'originale, se consecutivi
+    const sideBySide = (l, r) => [table([row([cell(l, half, { borders: noBorders }), cell(r, usable - half, { borders: noBorders })])], [half, usable - half], { borders: noBorders }), P('', { after: 160 })];
 
-    return doc('Foglio allenamento ' + (s.date || ''), [section(children, { landscape: true, margins })]);
+    let started = false;
+    const breakIfNeeded = () => { if (started) children.push(P('', { pageBreakBefore: true, after: 0 })); };
+    for (let i = 0; i < mods.length; i++) {
+      const m = mods[i], next = mods[i + 1];
+      if (m === 'attendance' && attInHead && i === 0) continue;
+      if (m === 'program') children.push(...programBlock());
+      else if (m === 'attendance') children.push(...attendanceBlock());
+      else if (m === 'observation') { breakIfNeeded(); children.push(...observationBlock()); }
+      else if (m === 'review' || m === 'errors') {
+        breakIfNeeded();
+        const pair = (m === 'review' && next === 'errors') || (m === 'errors' && next === 'review');
+        if (pair && m === 'errors') {
+          // ordine scelto: errori prima del bilancio
+          children.push(table([
+            row([headerCell(ERRORS_H, half, { size: 18 }), headerCell(REVIEW_H, usable - half, { size: 18 })], { header: true }),
+            row([cell(errorsContent(), half), cell(reviewContent(usable - half), usable - half)], { minHeight: Math.round(5 * CM), cantSplit: false }),
+          ], [half, usable - half]), P('', { after: 200 }));
+        } else children.push(...reviewErrorsBlock(pair, m));
+        if (pair) i++;
+      } else if (m === 'selfeval' || m === 'trainer') {
+        const pair = (m === 'selfeval' && next === 'trainer') || (m === 'trainer' && next === 'selfeval');
+        const a = m === 'selfeval' ? selfevalContent() : trainerContent();
+        if (pair) { children.push(...sideBySide(a, next === 'trainer' ? trainerContent() : selfevalContent())); i++; } else children.push(...sideBySide(a, [P('')]));
+      }
+      started = true;
+    }
+    return doc('Allenamento ' + (s.date || ''), [section(children, { landscape: true, margins })]);
   }
 
   // ---------------- 1.3 Scheda della partita ----------------
@@ -336,12 +378,13 @@ export function createBuilder(docx, ctx = {}) {
     return doc('Libreria esercizi', [section(children, { landscape: false, margins })]);
   }
 
-  return { sessionObservation, sessionPlan, match, plan, library };
+  return { session, match, plan, library };
 }
 
 // Elenco dei documenti da produrre per un record (chiave stabile -> per aggiornare lo stesso file su Drive)
 export function docVariants(rec, hasObservation) {
-  if (rec.kind === 'session') return hasObservation ? ['plan', 'observation'] : ['plan'];
+  // seduta: un solo documento con i moduli presenti (chiave 'plan' come prima, così si aggiorna lo stesso file su Drive)
+  if (rec.kind === 'session') return ['plan'];
   if (rec.kind === 'match') return ['match'];
   if (rec.kind === 'plan') return ['termplan'];
   if (rec.kind === 'library') return (rec.exercises || []).length ? ['library'] : [];
@@ -350,8 +393,7 @@ export function docVariants(rec, hasObservation) {
 
 export function buildDocument(builder, rec, variant) {
   switch (variant) {
-    case 'plan': return builder.sessionPlan(rec);
-    case 'observation': return builder.sessionObservation(rec);
+    case 'plan': return builder.session(rec);
     case 'match': return builder.match(rec);
     case 'termplan': return builder.plan(rec);
     case 'library': return builder.library(rec);
