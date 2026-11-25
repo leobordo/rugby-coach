@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0b5d1e"/>
+  <g stroke="#ffffff" stroke-width="14" fill="none" stroke-linecap="round">
+    <line x1="96" y1="72" x2="96" y2="440" stroke-opacity="0.35"/>
+    <line x1="416" y1="72" x2="416" y2="440" stroke-opacity="0.35"/>
+    <line x1="256" y1="72" x2="256" y2="440" stroke-opacity="0.35" stroke-dasharray="20 20"/>
+  </g>
+  <g transform="rotate(-35 256 256)">
+    <ellipse cx="256" cy="256" rx="150" ry="92" fill="#ffffff"/>
+    <ellipse cx="256" cy="256" rx="150" ry="92" fill="none" stroke="#0d1b0f" stroke-width="12"/>
+    <line x1="186" y1="256" x2="326" y2="256" stroke="#c62828" stroke-width="12" stroke-linecap="round"/>
+    <g stroke="#c62828" stroke-width="10" stroke-linecap="round">
+      <line x1="206" y1="238" x2="206" y2="274"/><line x1="236" y1="238" x2="236" y2="274"/>
+      <line x1="266" y1="238" x2="266" y2="274"/><line x1="296" y1="238" x2="296" y2="274"/>
+    </g>
+  </g>
+  <path d="M332 420 Q396 380 420 300" stroke="#ffd600" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="2 30"/>
+</svg>
