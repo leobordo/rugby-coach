@@ -73,8 +73,17 @@ export async function remove(kind, id) {
 export async function removeLocalOnly(kind, id) {
   await db.delete(STORE_OF_KIND[kind], id);
   if (forgetHook && SYNCABLE_KINDS.includes(kind)) await forgetHook(kind, id);
-  emit('removed', { kind, id });
+  emit('removed', { kind, id, remote: true });
 }
+
+// Schede aperte sullo schermo in questo momento: la ricezione da Drive non le tocca, avvisa la pagina
+const openRecs = new Map();
+export function setOpen(kind, id, on) {
+  const k = kind + ':' + id;
+  const n = (openRecs.get(k) || 0) + (on ? 1 : -1);
+  if (n > 0) openRecs.set(k, n); else openRecs.delete(k);
+}
+export function isOpen(kind, id) { return openRecs.has(kind + ':' + id); }
 
 export async function getSetting(key, def = null) {
   const r = await db.get('settings', key);
@@ -121,6 +130,9 @@ export async function mergeRemoteCollection(kind, remoteItems, remoteTombs) {
   if (res.upserts.length) await db.putMany(store, res.upserts);
   if (res.deletes.length) await db.deleteMany(store, res.deletes);
   await setTombstones(kind, res.tombs);
+  // un elemento aperto sullo schermo (es. un esercizio) viene avvisato
+  for (const u of res.upserts) emit('remote-update', { kind, id: u.id, rec: u, collection: true });
+  for (const id of res.deletes) emit('removed', { kind, id, remote: true });
   if (res.upserts.length || res.deletes.length) emit('imported', { kind, upserts: res.upserts.length, deletes: res.deletes.length });
   return res;
 }

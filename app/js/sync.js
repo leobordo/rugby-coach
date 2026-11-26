@@ -68,6 +68,9 @@ export function createSyncEngine({
   getJsonFolderId = null,
   // file dell'app da considerare (cartella principale + "File per l'app"); senza: solo la cartella
   listRemote = null,
+  // prima di caricare una scheda già su Drive: se lì c'è una versione più recente non ancora ricevuta, la si
+  // unisce prima. Restituisce { skip: true } se dopo l'unione non c'è più nulla da caricare.
+  beforeUpload = null,
 }) {
   let running = null;
 
@@ -87,14 +90,19 @@ export function createSyncEngine({
 
   // Ripristino: la scheda corrisponde già ai file su Drive -> "sincronizzato" senza ricaricarla.
   // Con pending: true i file sono noti (niente duplicati) ma la versione locale va comunque inviata.
-  async function adopt(kind, id, files, { folderId, pending = false } = {}) {
+  // jsonVersion: versione Drive del .json che corrisponde ai dati locali (ultima versione comune).
+  // received: la scheda locale è stata appena sostituita da quella su Drive -> "salvata", anche se era in attesa.
+  async function adopt(kind, id, files, { folderId, pending = false, jsonVersion, received = false } = {}) {
     const key = syncKey(kind, id);
     const e = (await store.get(key)) || { key, kind, id, files: {} };
     e.files = { ...e.files, ...files };
     e.folderId = folderId || e.folderId;
     e.error = null;
     e.attempts = 0;
-    if (pending) {
+    if (jsonVersion != null) e.jsonVersion = String(jsonVersion);
+    if (received) {
+      e.status = SYNC_STATUS.SYNCED; e.syncedAt = now(); e.deleted = false; e.rev = (e.rev || 0) + 1; e.nextAttemptAt = 0;
+    } else if (pending) {
       e.status = SYNC_STATUS.PENDING; e.dirtyAt = now(); e.rev = (e.rev || 0) + 1; e.nextAttemptAt = 0;
     } else if (e.status !== SYNC_STATUS.PENDING) {
       e.status = SYNC_STATUS.SYNCED; e.syncedAt = now();
@@ -174,6 +182,7 @@ export function createSyncEngine({
     entry.status = SYNC_STATUS.SYNCING;
     await store.put(entry); onChange(entry);
     const files = { ...entry.files };
+    let jsonVersion = entry.jsonVersion || null;
     const links = { ...(entry.links || {}) };
     // primo invio da questo dispositivo (o cartella cambiata): cerca i file già esistenti della scheda
     let remote = {};
@@ -184,10 +193,21 @@ export function createSyncEngine({
     const hasRemote = Object.keys(remote).length > 0;
     const knewFiles = Object.keys(entry.files || {}).length > 0;
 
-    if (record.example && (hasRemote || knewFiles || record.placeholder)) {
+    let record2 = record;
+    if (beforeUpload && files.json) {
+      const r = await beforeUpload(entry, record, files);
+      if (r && r.skip) {
+        const cur = (await store.get(entry.key)) || entry;
+        if (cur.status === SYNC_STATUS.SYNCING) { cur.status = cur.rev === startedRev ? SYNC_STATUS.SYNCED : SYNC_STATUS.PENDING; await store.put(cur); onChange(cur); }
+        return cur.status === SYNC_STATUS.SYNCED ? SYNC_STATUS.SYNCED : cur.status;
+      }
+      if (r && r.record) record2 = r.record;
+      if (r && r.jsonVersion) jsonVersion = r.jsonVersion;
+    }
+    if (record2.example && (hasRemote || knewFiles || record2.placeholder)) {
       // esempio non modificato: non sovrascrive mai, adotta i file che esistono già
     } else {
-      const artifacts = await buildArtifacts(entry.kind, record, { known: { ...entry.files }, remote });
+      const artifacts = await buildArtifacts(entry.kind, record2, { known: { ...entry.files }, remote });
       const keys = new Set(artifacts.map((a) => a.key));
       // i .docx prima del .json (così il .json elenca i loro id)
       const ordered = [...artifacts.filter((a) => a.key !== 'json'), ...artifacts.filter((a) => a.key === 'json')];
@@ -198,6 +218,7 @@ export function createSyncEngine({
         }
         const res = await uploadArtifact(entry, art, art.key === 'json' ? ctx.jsonFolderId : folderId, files);
         files[art.key] = res.id;
+        if (art.key === 'json') jsonVersion = res && res.version != null ? String(res.version) : null;
         if (res.webViewLink) links[art.key] = res.webViewLink;
       }
     }
@@ -208,6 +229,7 @@ export function createSyncEngine({
     latest.error = null;
     latest.attempts = 0;
     latest.folderId = folderId;
+    latest.jsonVersion = jsonVersion;
     if (latest.rev === startedRev) {
       latest.status = SYNC_STATUS.SYNCED;
       latest.syncedAt = now();

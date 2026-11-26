@@ -1,6 +1,6 @@
 {
   "name": "rugby-coach",
-  "version": "1.4.2",
+  "version": "1.5.1",
   "private": true,
   "description": "PWA per allenatori di minirugby: schede di allenamento e partita, Tactic Board, salvataggio su Google Drive.",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "scripts": {
     "serve": "python3 -m http.server 8080 --directory app",
     "test": "node --test \"tests/*.test.mjs\"",
-    "e2e": "node tests/e2e.mjs && node tests/e2e-multidevice.mjs && node tests/e2e-datafolder.mjs && node tests/phone-flow.mjs",
+    "e2e": "node tests/e2e.mjs && node tests/e2e-multidevice.mjs && node tests/e2e-datafolder.mjs && node tests/e2e-receive.mjs && node tests/phone-flow.mjs",
     "vendor": "node scripts/vendor.mjs"
   },
   "devDependencies": {

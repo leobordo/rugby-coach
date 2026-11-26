@@ -48,4 +48,8 @@ export async function rosterView(root, params, query) {
     }
   }
   await render();
+  // novità ricevute da un altro dispositivo (senza disturbare chi sta scrivendo un nome)
+  const onImported = () => { if (listEl.isConnected && !listEl.contains(document.activeElement)) render(); };
+  repo.bus.addEventListener('imported', onImported);
+  return () => repo.bus.removeEventListener('imported', onImported);
 }

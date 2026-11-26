@@ -45,8 +45,10 @@ Accanto a ogni scheda vedi a che punto è:
 - **Da salvare su Drive** – verrà copiata su Drive appena possibile;
 - **Salvato su Drive ✓** – c'è anche la copia su Drive.
 
-Se compare il pulsante giallo **Tocca per salvare su Drive**, toccalo: si apre un attimo la finestra di Google e
-le schede vengono salvate. Succede quando l'app è rimasta chiusa per un po'. Anche **✓ Fine allenamento** salva tutto.
+Se compare il pulsante giallo **Tocca per salvare su Drive** (o **Tocca per aggiornare da Drive**, se non c'è nulla
+da salvare), toccalo: si apre un attimo la finestra di Google, le schede vengono salvate e arrivano le novità degli
+altri dispositivi. Succede quando l'app è rimasta aperta o chiusa per un po'; in alto si legge **Da salvare su Drive**
+o **Da aggiornare**. Vanno bene anche **✓ Fine allenamento**, **+ Nuovo allenamento** o aprire una scheda.
 
 ## Cosa trovi su Drive
 
@@ -72,6 +74,22 @@ Funziona anche senza Google Drive collegato. Se il telefono non permette di cond
 3. L'app ritrova la cartella **Rugby Coach** e recupera da sola schede, libreria esercizi e rosa.
 
 Nessun doppione: i documenti su Drive vengono aggiornati, non copiati.
+
+## Telefono e computer insieme
+
+Puoi usare l'app su più dispositivi con **lo stesso account Google** (per esempio il telefono a bordo campo e il
+computer a casa). Le modifiche fatte su uno **arrivano da sole** sugli altri: quando apri l'app, quando torni
+all'app e ogni pochi minuti mentre è aperta (serve la rete). In alto compare per un attimo **Aggiornato da Drive ✓**.
+
+- Se stai scrivendo in una scheda e la stessa scheda cambia sull'altro dispositivo, quello che scrivi resta com'è:
+  compare l'avviso **Questa scheda è stata aggiornata su un altro dispositivo · Aggiorna**. Tocca **Aggiorna** per
+  vedere anche le modifiche arrivate.
+- Se hai cambiato la stessa scheda su due dispositivi senza rete, non si perde nulla: resta la versione più recente
+  e l'altra compare tra le schede come copia **(conflitto del …)**, da controllare o eliminare.
+- Se una scheda aperta viene eliminata sull'altro dispositivo compare **Eliminata su un altro dispositivo**:
+  **Tienila** la fa tornare ovunque, **Chiudi** la lascia eliminata.
+- Se è passato molto tempo compare **Tocca per aggiornare da Drive**: toccalo per ricevere le novità (l'app non apre
+  mai da sola la finestra di Google).
 
 ## Domande frequenti
 

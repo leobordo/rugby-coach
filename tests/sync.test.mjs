@@ -41,7 +41,7 @@ function fakeDrive({ failWith } = {}) {
       if (meta.parents && !files.has(meta.parents[0])) return json(404, { error: { message: 'File not found: ' + meta.parents[0] } });
       const fid = 'f' + (++n);
       files.set(fid, { id: fid, ...meta, content, version: 1 });
-      return json(200, { id: fid, name: meta.name, webViewLink: 'https://drive/' + fid });
+      return json(200, { id: fid, name: meta.name, webViewLink: 'https://drive/' + fid, version: '1' });
     }
     if (opts.method === 'PATCH' && !upload && id) {
       assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
@@ -67,7 +67,7 @@ function fakeDrive({ failWith } = {}) {
       const { trashed: wantTrashed, ...rest } = meta;
       Object.assign(f, rest, { content, version: f.version + 1 });
       if (wantTrashed === false && !state.ignoreUntrash) f.trashed = false;
-      return json(200, { id, name: f.name, trashed: !!f.trashed });
+      return json(200, { id, name: f.name, trashed: !!f.trashed, version: String(f.version) });
     }
     if (opts.method === 'GET' && !id && !upload) {
       assert.equal(u.searchParams.get('supportsAllDrives'), 'true');
@@ -515,4 +515,55 @@ test('coda: i .json nuovi in "File per l\'app", i Word nella cartella; un .json 
   assert.deepEqual(fd.files.get(n['docx-plan']).parents, ['folder1']);
   assert.equal((await eng.getStatus('session', 'old')).files.json, oldJson.id, 'stesso .json, non un doppio');
   assert.equal([...fd.files.values()].filter((f) => f.mimeType === 'application/json').length, 2);
+});
+
+test('ricezione: la coda ricorda la versione Drive del .json (versione comune); "ricevuta" segna salvata', async () => {
+  const { fd, engine, records } = setup();
+  records.set('session:v', { date: 'd', text: 'v1' });
+  await engine.markDirty('session', 'v');
+  await engine.processQueue();
+  const e1 = await engine.getStatus('session', 'v');
+  assert.equal(e1.jsonVersion, String(fd.files.get(e1.files.json).version));
+  records.set('session:v', { date: 'd', text: 'v2' });
+  await engine.markDirty('session', 'v');
+  await engine.adopt('session', 'v', {}, { jsonVersion: '7', received: true });
+  const e2 = await engine.getStatus('session', 'v');
+  assert.equal(e2.status, SYNC_STATUS.SYNCED); assert.equal(e2.jsonVersion, '7');
+});
+
+test('prima di caricare: se su Drive c\'è una versione più recente, si unisce prima (niente sovrascritture all\'indietro)', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('folder1', { id: 'folder1', mimeType: FOLDER_MIME, name: 'Rugby Coach' });
+  const records = new Map([['session:w', { date: 'd', text: 'mia' }]]);
+  let checked = 0; let skipNext = false;
+  const eng = createSyncEngine({
+    store: memStore(), drive, getRecord: async (k, id) => records.get(k + ':' + id), getFolderId: async () => 'folder1',
+    buildArtifacts: async (kind, rec) => [{ key: 'json', name: 'w.json', mimeType: 'application/json', data: rec.text }],
+    beforeUpload: async (entry, rec, files) => { checked++; if (skipNext) { await eng.adopt('session', 'w', {}, { received: true }); return { skip: true }; } return null; },
+  });
+  await eng.markDirty('session', 'w'); await eng.processQueue();
+  assert.equal(checked, 0, 'primo invio: nessun .json su Drive da controllare');
+  const id = (await eng.getStatus('session', 'w')).files.json;
+  fd.files.get(id).content = 'di un altro dispositivo';
+  skipNext = true; // l'altra versione era più recente: dopo l'unione non c'è nulla da caricare
+  records.set('session:w', { date: 'd', text: 'vecchia' });
+  await eng.markDirty('session', 'w'); await eng.processQueue();
+  assert.equal(checked, 1, 'controllo prima di caricare');
+  assert.equal(fd.files.get(id).content, 'di un altro dispositivo', 'la versione più recente su Drive resta');
+  assert.equal((await eng.getStatus('session', 'w')).status, SYNC_STATUS.SYNCED);
+});
+
+test('"File per l\'app" spostata a mano fuori da "Rugby Coach": ritrovata (stessa cartella) e rimessa al suo posto', async () => {
+  const fd = fakeDrive();
+  const drive = createDriveClient({ fetch: fd.fetch, getToken: async () => 'tok' });
+  fd.files.set('root', { id: 'root', mimeType: FOLDER_MIME, name: 'Rugby Coach', appProperties: { rcApp: 'rugby-coach', rcKind: 'folder' } });
+  fd.files.set('altrove', { id: 'altrove', mimeType: FOLDER_MIME, name: 'Mie cose' });
+  const a = await findOrCreateDataFolder(drive, 'root');
+  fd.files.get(a.id).parents = ['altrove'];
+  const b = await findOrCreateDataFolder(drive, 'root');
+  assert.equal(b.id, a.id, 'stessa cartella, non una nuova');
+  assert.equal(b.created, false);
+  assert.deepEqual(fd.files.get(a.id).parents, ['root'], 'rimessa dentro "Rugby Coach"');
+  assert.equal([...fd.files.values()].filter((f) => f.appProperties?.rcKind === 'dataFolder').length, 1);
 });

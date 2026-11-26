@@ -51,6 +51,7 @@ export async function homeView(root, params, query) {
   search.addEventListener('input', () => { filters.q = search.value.trim().toLowerCase(); renderList(); });
 
   async function create() {
+    sync.renewInGesture(); // accesso scaduto: si rinnova nel tocco (subito, prima di ogni attesa)
     const prefs = (await repo.getSetting('prefs', {})) || {};
     const rec = conf.kind === 'session' ? newSession(prefs.defaultModules ? { modules: sanitizeModules(prefs.defaultModules) } : {}) : conf.kind === 'match' ? newMatch() : newPlan();
     if (conf.kind === 'plan') {
@@ -62,9 +63,12 @@ export async function homeView(root, params, query) {
     await openPrepared(openHref(rec));
   }
 
+  let renderToken = 0;
   async function renderList() {
+    const my = ++renderToken;
     const all = await repo.list(conf.kind);
     const entries = new Map((await sync.allEntries()).map((e) => [e.key, e]));
+    if (my !== renderToken) return; // è già partito un aggiornamento più recente dell'elenco
     let items = all.filter((r) => !filters.cat || recCats(r).includes(filters.cat));
     if (filters.from) items = items.filter((r) => (r.date || '') >= filters.from);
     if (filters.to) items = items.filter((r) => (r.date || '') <= filters.to);
@@ -93,8 +97,9 @@ export async function homeView(root, params, query) {
         title = r.title || 'Piano';
         meta = [r.category, r.season, `${r.sessions.length} allenamenti`].filter(Boolean).join(' · ');
       }
+      if (r.conflict && r.kind !== 'plan') title += ' (' + r.conflict + ')';
       listEl.append(h('article.rec-card',
-        h('a.rec-main', { href: openHref(r) },
+        h('a.rec-main', { href: openHref(r), on: { click: () => { sync.renewInGesture(); } } },
           h('strong.rec-title', title),
           h('span.rec-meta', meta || ' '),
           h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
@@ -108,7 +113,8 @@ export async function homeView(root, params, query) {
     }
   }
   await renderList();
-  const onEntry = () => { if (listEl.isConnected) renderList(); else repo.bus.removeEventListener('sync-state', onEntry); };
+  const onEntry = () => { if (listEl.isConnected) renderList(); else { repo.bus.removeEventListener('sync-state', onEntry); repo.bus.removeEventListener('imported', onEntry); } };
   repo.bus.addEventListener('sync-state', onEntry);
-  return () => repo.bus.removeEventListener('sync-state', onEntry);
+  repo.bus.addEventListener('imported', onEntry);
+  return () => { repo.bus.removeEventListener('sync-state', onEntry); repo.bus.removeEventListener('imported', onEntry); };
 }

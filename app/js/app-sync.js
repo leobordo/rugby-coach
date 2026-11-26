@@ -4,7 +4,7 @@ import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKe
 import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder, findOrCreateDataFolder, moveRootJson, moveFileQuietly } from './drive.js';
 import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
-import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup } from './model.js';
+import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup, decideSheet, conflictCopy, sameRecordContent } from './model.js';
 import { debounce } from './ui.js';
 
 export const DEFAULT_FOLDER_NAME = 'Rugby Coach';
@@ -66,6 +66,7 @@ export async function initSync() {
     isOnline: () => navigator.onLine,
     getJsonFolderId: async () => (await repo.getSetting('drive', null))?.dataFolderId || null,
     listRemote: () => listPersonal(),
+    beforeUpload,
     onChange: (e) => { if (e.status) statusMap.set(e.key, e.status); else statusMap.delete(e.key); repo.emit('sync-entry', e); },
   });
   for (const e of await syncStore.all()) statusMap.set(e.key, e.status);
@@ -78,7 +79,11 @@ export async function initSync() {
   await refreshState();
   await requeueMigrated();
   window.addEventListener('online', () => { runNow(); if (state.configured && state.folder) auth.preload(); });
-  setInterval(() => { if (navigator.onLine) runNow(); }, 60e3);
+  // ricezione automatica: ogni pochi minuti (controllo leggero), al ritorno in primo piano, quando torna la rete
+  setInterval(() => { if (navigator.onLine) runNow({ timer: true }); }, Math.max(1000, Math.min(30e3, pullEveryMs() / 2)));
+  const onForeground = debounce(() => { if (navigator.onLine && document.visibilityState === 'visible') { dataCheckedAt = 0; runNow(); } }, 400);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') onForeground(); });
+  window.addEventListener('focus', onForeground);
   // Drive collegato: lo script di accesso Google viene preparato subito (così il tocco "Salva su Drive" funziona
   // anche su iPhone). Se non è collegato, si prepara solo quando l'app propone di collegarlo (preloadGoogle).
   if (state.configured && state.folder && navigator.onLine) auth.preload();
@@ -234,28 +239,37 @@ async function buildFor(kind, rec, ctx = {}) {
 
 const schedule = debounce(() => runNow(), 4000);
 
-// Con accesso valido: si legge l'indice delle schede eliminate da altri telefoni e si tolgono anche qui
-// (se l'eliminazione è più recente), così non vengono rimandate su Drive. Una sola lettura, fuori dalla coda.
-let pulledDeletions = false;
-async function pullRemoteDeletions() {
-  const folder = await repo.getSetting('drive', null);
-  if (!folder || !folder.folderId) return;
-  const files = await listPersonal({ mimeType: 'application/json', props: { rcKind: 'tombstones', rcId: COLLECTION_ID } });
-  const f = files.find((x) => x.appProperties && x.appProperties.rcKind === 'tombstones');
-  if (f) await mergeDeletedJson(await drive.download(f.id));
+// Un giro alla volta (ricezione + invio): chi chiama durante un giro ne ottiene uno subito dopo
+let runCurrent = null;
+let runQueued = null;
+export function runNow(opts = {}) {
+  if (!runCurrent) {
+    runCurrent = runOnce(opts).finally(() => { runCurrent = null; });
+    return runCurrent;
+  }
+  if (opts.timer) return runCurrent;
+  if (runQueued) { runQueued.force = runQueued.force || !!opts.force; return runQueued.p; }
+  const q = { force: !!opts.force };
+  q.p = runCurrent.catch(() => {}).then(() => { runQueued = null; return runNow({ force: q.force }); });
+  runQueued = q;
+  return q.p;
 }
 
-export async function runNow({ force = false } = {}) {
+async function runOnce({ force = false, timer = false } = {}) {
   if (!engine) return null;
   const prefs = await repo.getSetting('prefs', { autoSync: true }) || { autoSync: true };
   if (!force && prefs.autoSync === false) return null;
   if (!state.configured || !state.folder) return null;
   if (!auth.getValidToken()) {
+    // accesso scaduto: niente chiamate, ma l'utente lo vede SEMPRE (invito e indicatore), anche senza nulla da salvare
     const p = await engine.pending();
-    state.needsAuth = p.length > 0;
+    state.needsAuth = true;
+    state.needsAuthFor = p.length ? 'save' : 'update';
     repo.emit('sync-state', { ...state });
     return null;
   }
+  // dal timer: niente chiamate se non c'è nulla da inviare e il controllo è stato fatto da poco
+  if (timer && !force && Date.now() - lastPull < pullEveryMs() && !(await engine.pending()).length) return null;
   state.running = true; repo.emit('sync-state', { ...state });
   try {
     // "File per l'app" (ritrovata o creata) e spostamento dei vecchi .json dalla cartella principale
@@ -264,23 +278,26 @@ export async function runNow({ force = false } = {}) {
       if (e instanceof DriveAuthError) { state.needsAuth = true; return null; }
       return null; // senza la sottocartella non si invia nulla: riprova al prossimo giro
     }
-    // indice delle eliminazioni: una volta per avvio e prima di ogni giro con schede da inviare
-    // (così una scheda eliminata altrove più di recente non viene rimandata su Drive)
+    // ricezione delle modifiche fatte su altri dispositivi (prima di ogni invio: niente sovrascritture all'indietro)
     const waiting = (await engine.pending()).some((e) => SHEET_KINDS.includes(e.kind) && !e.deleted);
-    if (!pulledDeletions || waiting) {
+    if (Date.now() >= pullBackoffUntil) {
       try {
-        await pullRemoteDeletions();
-        pulledDeletions = true;
+        await pullFromDrive();
+        pullFails = 0;
       } catch (e) {
-        pulledDeletions = false;
-        console.warn(e);
-        if (e instanceof DriveAuthError) { state.needsAuth = true; return null; }
-        if (waiting) return null; // senza l'indice non si rischia di rimandare una scheda eliminata: riprova tra poco
+        console.warn('Ricezione da Drive', e);
+        if (e instanceof DriveAuthError) { state.needsAuth = true; state.needsAuthFor = 'update'; return null; }
+        if (e instanceof DriveHttpError && (e.status === 403 || e.status === 429)) {
+          pullFails++; pullBackoffUntil = Date.now() + Math.min(30 * 60e3, 30e3 * 2 ** (pullFails - 1)); // limiti di Drive: si rallenta
+        }
+        if (waiting) return null; // senza aver ricevuto non si rischia di sovrascrivere: riprova tra poco
       }
-    }
+    } else if (waiting) return null;
     const sum = await engine.processQueue({ force });
     state.needsAuth = !!sum.needsAuth;
+    if (sum.needsAuth) state.needsAuthFor = 'save';
     state.lastRun = { at: Date.now(), ...sum };
+    if (sum.folderMissing) dataCheckedAt = 0;
     state.lastError = sum.folderMissing ? 'La cartella "Rugby Coach" su Drive non si trova più: in Impostazioni tocca "Collega Google Drive" per ricrearla.' : null;
     return sum;
   } finally {
@@ -296,6 +313,15 @@ export async function syncNow() {
   if (!state.folder) throw new Error('Collega prima Google Drive (Impostazioni).');
   if (!auth.getValidToken()) await signIn();
   return runNow({ force: true });
+}
+
+// Accesso scaduto: un gesto utile (aprire una scheda, "Nuovo allenamento", "Fine allenamento") lo rinnova.
+// Va chiamata in modo sincrono nel tocco: la finestra di Google (prompt '') si apre e si chiude da sola.
+export function renewInGesture() {
+  if (!state.configured || !state.folder || !navigator.onLine || !auth || auth.getValidToken() || !auth.isReady()) return null;
+  const p = signIn();
+  p.then(() => runNow({ force: true })).catch(() => {});
+  return p;
 }
 
 // Numero di schede da salvare su Drive, letto dalla memoria (sincrono: utilizzabile dentro un tocco)
@@ -526,9 +552,12 @@ async function listPersonal(opts = {}) {
 let rootJsonChecked = false; // spostamento dei .json dalla cartella principale: una volta per avvio, finché serve
 // A ogni giro una sola files.list delle sottocartelle: la ritrova (anche se un altro telefono l'ha appena creata),
 // la crea se manca e unisce eventuali doppie.
+let dataCheckedAt = 0; // 0 = da cercare: all'avvio, al ritorno in primo piano, o se un invio non trova la cartella
 async function prepareDataFolder() {
   const f = await repo.getSetting('drive', null);
   if (!f || !f.folderId) return null;
+  // ricerca della sottocartella: all'avvio, ogni 10 minuti e se un invio non la trova (non a ogni giro)
+  if (f.dataFolderId && rootJsonChecked && dataCheckedAt) return f.dataFolderId;
   const found = await findOrCreateDataFolder(drive, f.folderId, APP_ID);
   if (f.dataFolderId && f.dataFolderId !== found.id) {
     // un altro telefono l'aveva creata prima: i .json noti vengono portati in quella giusta
@@ -536,6 +565,7 @@ async function prepareDataFolder() {
     rootJsonChecked = false;
   }
   const dataId = found.id;
+  dataCheckedAt = Date.now();
   if (dataId !== f.dataFolderId) await repo.setSetting('drive', { ...(await repo.getSetting('drive', null)), dataFolderId: dataId });
   if (!rootJsonChecked) {
     // interrotta (rete, errore di Drive)? non blocca il resto: si riprende al prossimo giro
@@ -545,4 +575,143 @@ async function prepareDataFolder() {
     }
   }
   return dataId;
+}
+
+// =====================================================================================================
+// Ricezione automatica delle modifiche fatte su altri dispositivi dello stesso account
+// =====================================================================================================
+let lastPull = 0;
+let listedVersions = new Map(); // versioni viste nell'ultima files.list (id -> version)
+let pullFails = 0;
+let pullBackoffUntil = 0;
+function pullEveryMs() {
+  try { const v = Number(localStorage.getItem('rc.pullEveryMs')); if (v >= 1000) return v; } catch { /* */ }
+  return 2 * 60e3;
+}
+const JSON_MIME = 'application/json';
+
+// file noti di una scheda dalle etichette del suo .json (gli id dei .docx sono elencati lì)
+function filesOfRemote(x) {
+  const out = { json: x.id };
+  for (const [k, v] of Object.entries(x.appProperties || {})) if (k.startsWith('rcF_') && v) out[k.slice(4)] = v;
+  return out;
+}
+
+// Una sola files.list su "File per l'app" (e sulla cartella principale finché la migrazione non è finita),
+// confrontata con la versione nota di ogni file: si scaricano solo i .json cambiati.
+async function pullFromDrive() {
+  const f = await repo.getSetting('drive', null);
+  if (!f || !f.folderId || !f.dataFolderId) return { changes: 0 };
+  const lists = await Promise.all([drive.listAppFiles(f.dataFolderId, { mimeType: JSON_MIME }), rootJsonChecked ? [] : drive.listAppFiles(f.folderId, { mimeType: JSON_MIME })]);
+  const byKey = new Map();
+  listedVersions = new Map();
+  for (const x of [...lists[0], ...lists[1]]) {
+    if (x.version != null) listedVersions.set(x.id, String(x.version));
+    const ap = x.appProperties || {};
+    const key = localKeyOfRemote(ap);
+    if (key && ap.rcVariant === 'json' && !byKey.has(key)) byKey.set(key, x);
+  }
+  const entries = new Map((await syncStore.all()).map((e) => [e.key, e]));
+  const rank = (k) => (k.startsWith('deleted:') ? 0 : k.startsWith('library:') || k.startsWith('roster:') ? 1 : 2);
+  let changes = 0;
+  for (const [key, x] of [...byKey].sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    const e = entries.get(key);
+    const v = x.version != null ? String(x.version) : '';
+    if (e && e.deleted) continue; // eliminata qui: i suoi file stanno andando nel cestino
+    if (e && e.jsonVersion && e.jsonVersion === v && (!e.files || !e.files.json || e.files.json === x.id)) continue;
+    const [kind, id] = key.split(':');
+    const files = filesOfRemote(x);
+    if (kind === 'deleted') {
+      if (await mergeDeletedJson(await drive.download(x.id))) changes++;
+      await engine.adopt(kind, id, files, { folderId: f.folderId, jsonVersion: v });
+    } else if (kind === 'library' || kind === 'roster') {
+      const m = await mergeCollectionJson(kind, await drive.download(x.id));
+      await engine.adopt(kind, id, files, { folderId: f.folderId, jsonVersion: v });
+      if (m.upserts.length || m.deletes.length) changes++;
+      if (m.remoteChanged) await engine.markDirty(kind, id); // qui c'era qualcosa che su Drive manca
+    } else if (SHEET_KINDS.includes(kind)) {
+      if (await applyRemoteSheet(kind, id, x, e, files, f.folderId)) changes++;
+    }
+  }
+  lastPull = Date.now();
+  if (changes) { repo.emit('imported', {}); repo.emit('pulled', { changes }); }
+  return { changes };
+}
+
+// Una scheda arrivata da Drive (vedi decideSheet): intera, vince la più recente; se modificata da entrambe le parti
+// dopo l'ultima versione comune (Drive "version"), la perdente resta come copia "(conflitto del …)".
+// Scheda aperta sullo schermo: non si tocca, la pagina riceve la versione nuova e decide (avviso "Aggiorna").
+async function applyRemoteSheet(kind, id, x, e, files, folderId) {
+  let R;
+  try { R = parseBackup(await drive.download(x.id))[0]; } catch (err) {
+    if (err instanceof DriveAuthError || err instanceof DriveOfflineError || err instanceof DriveHttpError) throw err;
+    console.warn('Scheda su Drive non leggibile', err); return false;
+  }
+  if (!R || R.kind !== kind || R.id !== id) return false;
+  const v = x.version != null ? String(x.version) : '';
+  const L = await repo.get(kind, id);
+  if (!L && await isTombstoned(kind, R)) {
+    // eliminata dopo quella versione, ma i suoi file sono di nuovo visibili (es. un telefono con una versione
+    // vecchia dell'app li ha tolti dal cestino): tornano nel cestino
+    if (!(e && e.deleted)) { await engine.adopt(kind, id, files, { folderId }); await engine.markDeleted(kind, id); }
+    return false;
+  }
+  if (L && repo.isOpen(kind, id) && !sameRecordContent(L, R)) {
+    repo.emit('remote-update', { kind, id, rec: R, version: v, files, folderId });
+    return true;
+  }
+  const knownBase = !!(e && e.jsonVersion);
+  const d = decideSheet({ local: L, remote: R, localChanged: !!(e && e.status !== SYNC_STATUS.SYNCED), remoteChanged: !knownBase || e.jsonVersion !== v, knownBase, sameContent: L ? sameRecordContent(L, R) : false });
+  switch (d) {
+    case 'insert':
+    case 'takeRemote':
+      await acceptRemote(kind, id, R, v, files, folderId);
+      return true;
+    case 'keepLocal':
+      await engine.adopt(kind, id, files, { folderId, jsonVersion: v });
+      await engine.markDirty(kind, id);
+      return false;
+    case 'conflictRemoteWins':
+      await repo.save(conflictCopy(L), { touch: false }); // la versione di questo dispositivo non si perde
+      await acceptRemote(kind, id, R, v, files, folderId);
+      return true;
+    case 'conflictLocalWins':
+      await repo.save(conflictCopy(R), { touch: false }); // la versione dell'altro dispositivo non si perde
+      await engine.adopt(kind, id, files, { folderId, jsonVersion: v }); // poi questa sostituisce quella su Drive
+      return true;
+    default:
+      if (L && v && (!e || e.jsonVersion !== v)) await engine.adopt(kind, id, files, { folderId, jsonVersion: v });
+      return false;
+  }
+}
+
+// La versione arrivata da Drive diventa quella del dispositivo (senza rimandarla su Drive)
+export async function acceptRemote(kind, id, R, version, files, folderId) {
+  await repo.save(R, { touch: false, sync: false });
+  await engine.adopt(kind, id, files || {}, { folderId, jsonVersion: version, received: true });
+  repo.emit('remote-applied', { kind, id });
+}
+// La pagina aperta ha unito la versione arrivata con le sue modifiche: da qui si riparte da quella versione
+export async function noteRemoteVersion(kind, id, version, files) {
+  if (engine) await engine.adopt(kind, id, files || {}, { jsonVersion: version });
+}
+// "Tienila": scheda eliminata su un altro dispositivo, rianimata da qui (stessi file su Drive, escono dal cestino)
+export async function reviveRecord(rec, files) {
+  if (files && Object.keys(files).length) await engine.adopt(rec.kind, rec.id, files, { pending: true });
+  await repo.save(rec);
+}
+
+// Prima di caricare una scheda: se su Drive c'è una versione più recente non ancora ricevuta, la si unisce prima.
+// Si usa la versione vista nella files.list di questo stesso giro (fatta subito prima degli invii): nessuna
+// chiamata in più per scheda.
+async function beforeUpload(entry, record, files) {
+  if (!SHEET_KINDS.includes(entry.kind) || !entry.jsonVersion || !files.json) return null;
+  const v = listedVersions.get(files.json);
+  if (!v || v === entry.jsonVersion) return null;
+  const folder = await repo.getSetting('drive', null);
+  await applyRemoteSheet(entry.kind, entry.id, { id: files.json, version: v, appProperties: {} }, entry, { json: files.json }, folder && folder.folderId);
+  const cur = await engine.getStatus(entry.kind, entry.id);
+  const rec = await repo.get(entry.kind, entry.id);
+  if (!rec || (cur && cur.status === SYNC_STATUS.SYNCED)) return { skip: true };
+  return { record: rec, jsonVersion: cur && cur.jsonVersion };
 }

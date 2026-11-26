@@ -65,7 +65,7 @@ async function driveRoute(route) {
     const [m, c] = partsOf(req.postDataBuffer());
     const id = 'f' + (++drive.n);
     drive.files.set(id, { ...JSON.parse(m), id, version: 1, content: Buffer.from(c, 'latin1').toString('utf8'), bytes: Buffer.from(c, 'latin1') });
-    return json({ id, name: JSON.parse(m).name });
+    return json({ id, name: JSON.parse(m).name, version: '1' });
   }
   const tm = /^\/drive\/v3\/files\/([^/]+)$/.exec(u.pathname);
   if (tm && req.method() === 'PATCH') { // files.update { trashed: true }
@@ -86,7 +86,7 @@ async function driveRoute(route) {
     const [m, c] = partsOf(req.postDataBuffer());
     // come Drive: aggiornare un file nel cestino lo lascia nel cestino, salvo trashed:false nei metadati
     Object.assign(f, JSON.parse(m), { version: f.version + 1, content: Buffer.from(c, 'latin1').toString('utf8'), bytes: Buffer.from(c, 'latin1') });
-    return json({ id: f.id, name: f.name, trashed: !!f.trashed });
+    return json({ id: f.id, name: f.name, trashed: !!f.trashed, version: String(f.version) });
   }
   return json({ error: { message: 'non simulato ' + u.pathname } }, 404);
 }

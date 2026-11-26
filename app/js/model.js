@@ -434,6 +434,10 @@ export function sanitizeFileName(s) {
 }
 
 export function recordTitle(rec) {
+  const t = recordTitleRaw(rec);
+  return rec && rec.conflict && rec.kind !== 'plan' ? t + ' (' + rec.conflict + ')' : t;
+}
+function recordTitleRaw(rec) {
   switch (rec.kind) {
     case 'session': {
       const cats = sessionCategories(rec).join('-');
@@ -457,7 +461,12 @@ export function normalizeUnder(u) {
   return s.toUpperCase().replace(/^UNDER\s*/, 'U');
 }
 
+// Copia di conflitto: stesso contenuto, nome distinto ("… (conflitto del 25/11/2026 10:32)")
 export function fileBaseName(rec, variant = 'main') {
+  const base = fileBaseNameRaw(rec, variant);
+  return rec && rec.conflict ? sanitizeFileName(base + ' (' + rec.conflict + ')') : base;
+}
+function fileBaseNameRaw(rec, variant = 'main') {
   if (rec.kind === 'session') {
     const cats = sessionCategories(rec).join('-');
     const label = variant === 'observation' ? 'Scheda di allenamento' : 'Allenamento';
@@ -739,4 +748,89 @@ export function resolveDeletions({ localTombs = {}, remoteTombs = {}, localAlive
     alive[id] = upd; delete tombs[id]; revive.push(id);
   }
   return { tombs, alive, remove, revive };
+}
+
+
+// ---------- Ricezione automatica da Drive (stesso utente, più dispositivi) ----------
+// Decisione per una scheda intera arrivata da Drive. local/remote: { updatedAt }; localChanged: modificata qui dopo
+// l'ultima versione comune (ancora da inviare); remoteChanged: su Drive c'è una versione diversa da quella comune
+// (Drive "version"); knownBase: la versione comune è nota (altrimenti decide solo la data).
+// Esito: 'skip' | 'insert' | 'takeRemote' | 'keepLocal' | 'conflictRemoteWins' | 'conflictLocalWins'
+export function decideSheet({ local, remote, localChanged, remoteChanged, knownBase = true, sameContent = false }) {
+  if (!remote) return 'skip';
+  if (!local) return 'insert';
+  if (!remoteChanged) return 'skip';
+  const tL = ts(local.updatedAt); const tR = ts(remote.updatedAt);
+  if (sameContent) return 'skip';
+  if (!localChanged || !knownBase) return tR >= tL ? 'takeRemote' : 'keepLocal';
+  // modificata da entrambe le parti dopo l'ultima versione comune: vince la più recente, l'altra resta come copia
+  return tR > tL ? 'conflictRemoteWins' : 'conflictLocalWins';
+}
+
+// Copia di una scheda "persa" in un conflitto: nuovo id, etichetta con data e ora
+export function conflictCopy(rec, when = new Date()) {
+  const c = deepClone(rec);
+  c.id = uid();
+  c.example = false;
+  const d = new Date(when);
+  const p2 = (n) => String(n).padStart(2, '0');
+  c.conflict = `conflitto del ${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}.${p2(d.getMinutes())}`;
+  if (c.kind === 'plan') c.title = (c.title || 'Piano') + ' (' + c.conflict + ')';
+  // nuovi id anche alle righe interne non servono: sono dentro un'altra scheda
+  return c;
+}
+
+// Contenuto uguale (senza contare data di modifica e campi tecnici)
+export function sameRecordContent(a, b) {
+  const strip = (r) => { const { updatedAt, createdAt, schemaVersion, ...rest } = r || {}; return JSON.stringify(rest); };
+  return strip(a) === strip(b);
+}
+
+// Unione a tre vie della scheda aperta sullo schermo: base = versione caricata, local = quella sullo schermo,
+// remote = quella arrivata. I campi cambiati qui restano come li si sta scrivendo, quelli cambiati solo altrove
+// arrivano; le liste con id (esercizi, righe) si uniscono per elemento. conflicts = campi cambiati da entrambi
+// (vince quello che si sta scrivendo; chi chiama conserva l'altra versione come copia).
+const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const sameV = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const byIdList = (arr) => Array.isArray(arr) && arr.every((x) => isObj(x) && x.id != null);
+export function merge3(base, local, remote) {
+  const st = { conflicts: 0 };
+  const value = m3(base, local, remote, st);
+  return { value, conflicts: st.conflicts };
+}
+function m3(base, local, remote, st) {
+  if (sameV(local, base)) return deepClone(remote);
+  if (sameV(remote, base) || sameV(remote, local)) return deepClone(local);
+  if (isObj(local) && isObj(remote)) {
+    const b = isObj(base) ? base : {};
+    const out = {};
+    for (const k of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+      if (k === 'updatedAt') { out[k] = local[k]; continue; }
+      const inL = k in local; const inR = k in remote; const inB = k in b;
+      if (inL && inR) out[k] = m3(b[k], local[k], remote[k], st);
+      else if (inL) { if (!(inB && sameV(b[k], local[k]))) out[k] = deepClone(local[k]); }
+      else if (inR) { if (!(inB && sameV(b[k], remote[k]))) out[k] = deepClone(remote[k]); }
+    }
+    return out;
+  }
+  if (byIdList(local) && byIdList(remote)) {
+    const b = byIdList(base) ? base : [];
+    const bMap = new Map(b.map((x) => [x.id, x]));
+    const rMap = new Map(remote.map((x) => [x.id, x]));
+    const lMap = new Map(local.map((x) => [x.id, x]));
+    const out = [];
+    for (const l of local) {
+      const r = rMap.get(l.id);
+      if (r) out.push(m3(bMap.get(l.id), l, r, st));
+      else if (!bMap.has(l.id) || !sameV(bMap.get(l.id), l)) out.push(deepClone(l)); // nuovo qui o cambiato qui
+    }
+    remote.forEach((r, i) => {
+      if (lMap.has(r.id) || bMap.has(r.id)) return;
+      const prev = i > 0 ? out.findIndex((x) => x.id === remote[i - 1].id) : -1;
+      out.splice(prev + 1, 0, deepClone(r));
+    });
+    return out;
+  }
+  st.conflicts++;
+  return deepClone(local);
 }

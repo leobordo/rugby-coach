@@ -34,6 +34,10 @@ export async function libraryView(root, params, query) {
     }
   }
   await render();
+  // novità ricevute da un altro dispositivo: la libreria si aggiorna da sola
+  const onImported = () => { if (grid.isConnected) render(); };
+  repo.bus.addEventListener('imported', onImported);
+  return () => repo.bus.removeEventListener('imported', onImported);
 }
 
 export async function exerciseView(root, { id }) {

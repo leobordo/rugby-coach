@@ -252,3 +252,39 @@ test('eliminazioni tra telefoni: vince l\'evento più recente (modifica dopo eli
   r = resolveDeletions({ localTombs: { s: '2026-11-25T11:00:00.000Z' }, remoteAlive: { s: '2026-11-25T10:05:00.000Z' }, updatedOf: () => '2026-11-25T10:05:00.000Z' });
   assert.deepEqual(r.remove, ['s']); assert.equal(r.tombs.s, '2026-11-25T11:00:00.000Z');
 });
+
+test('ricezione: decisione per una scheda arrivata da Drive (vince la più recente; conflitto → copia)', () => {
+  const t = (m) => `2026-11-25T10:${String(m).padStart(2, '0')}:00.000Z`;
+  const d = (o) => M.decideSheet(o);
+  assert.equal(d({ local: null, remote: { updatedAt: t(1) } }), 'insert', 'scheda nuova creata altrove');
+  assert.equal(d({ local: { updatedAt: t(1) }, remote: { updatedAt: t(5) }, localChanged: false, remoteChanged: false }), 'skip', 'versione già nota');
+  assert.equal(d({ local: { updatedAt: t(1) }, remote: { updatedAt: t(5) }, localChanged: false, remoteChanged: true }), 'takeRemote');
+  assert.equal(d({ local: { updatedAt: t(9) }, remote: { updatedAt: t(5) }, localChanged: false, remoteChanged: true }), 'keepLocal');
+  assert.equal(d({ local: { updatedAt: t(3) }, remote: { updatedAt: t(5) }, localChanged: true, remoteChanged: true }), 'conflictRemoteWins');
+  assert.equal(d({ local: { updatedAt: t(7) }, remote: { updatedAt: t(5) }, localChanged: true, remoteChanged: true }), 'conflictLocalWins');
+  assert.equal(d({ local: { updatedAt: t(3) }, remote: { updatedAt: t(5) }, localChanged: true, remoteChanged: true, knownBase: false }), 'takeRemote', 'senza versione comune decide la data');
+  assert.equal(d({ local: { updatedAt: t(3) }, remote: { updatedAt: t(5) }, localChanged: true, remoteChanged: true, sameContent: true }), 'skip');
+});
+
+test('ricezione: copia di conflitto con nome distinto (titolo e file) e nuovo id', () => {
+  const s = M.newSession({ date: '2026-12-02' });
+  const c = M.conflictCopy(s, new Date(2026, 10, 25, 9, 5));
+  assert.notEqual(c.id, s.id);
+  assert.equal(c.conflict, 'conflitto del 25/11/2026 09.05');
+  assert.match(M.fileBaseName(c), /^2026-12-02 Allenamento \(conflitto del 25-11-2026 09\.05\)$/);
+  assert.match(M.recordTitle(c), /conflitto del/);
+  const p = M.conflictCopy(M.newPlan({ title: 'II° TRIMESTRE' }), new Date(2026, 10, 25, 9, 5));
+  assert.match(p.title, /^II° TRIMESTRE \(conflitto del/);
+});
+
+test('scheda aperta: unione campo per campo (quello che si scrive resta, il resto arriva, liste per elemento)', () => {
+  const base = { location: '', date: '2026-12-01', planItems: [{ id: 'a', name: 'Uno' }, { id: 'b', name: 'Due' }] };
+  const local = { location: '', date: '2026-12-01', planItems: [{ id: 'a', name: 'Uno – scrivo' }, { id: 'b', name: 'Due' }, { id: 'c', name: 'Nuovo qui' }] };
+  const remote = { location: 'Campo di A', date: '2026-12-01', planItems: [{ id: 'a', name: 'Uno' }, { id: 'd', name: 'Nuovo là' }] };
+  const { value, conflicts } = M.merge3(base, local, remote);
+  assert.equal(conflicts, 0);
+  assert.equal(value.location, 'Campo di A');
+  assert.deepEqual(value.planItems.map((x) => x.name), ['Uno – scrivo', 'Nuovo là', 'Nuovo qui'], 'b tolto altrove e non toccato qui');
+  const r2 = M.merge3({ x: 'a' }, { x: 'b' }, { x: 'c' });
+  assert.equal(r2.value.x, 'b'); assert.equal(r2.conflicts, 1, 'stesso campo cambiato da entrambi');
+});

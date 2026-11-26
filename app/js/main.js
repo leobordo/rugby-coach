@@ -105,21 +105,32 @@ function header() {
   const syncInd = h('button.sync-ind', { type: 'button', title: 'Google Drive', on: { click: () => { location.hash = '#/impostazioni'; } } });
   // UN solo invito, non bloccante, quando l'accesso a Drive è scaduto e c'è qualcosa da salvare.
   // Il tocco è un gesto dell'utente: la finestra di Google si apre e si chiude da sola (prompt '').
+  const inviteText = h('span', 'Tocca per salvare su Drive');
   const invite = h('button.drive-invite', { type: 'button', hidden: true, on: { click: () => {
     const p = sync.syncNow(); // subito, dentro il tocco
     invite.disabled = true;
-    p.then(() => toast('Salvato su Drive ✓', 'ok'), (e) => toast(sync.friendlyError(e), 'error', 5000)).finally(() => { invite.disabled = false; });
-  } } }, h('span.di-ico', { 'aria-hidden': 'true' }, '☁'), h('span', 'Tocca per salvare su Drive'));
+    const forSave = sync.state.needsAuthFor === 'save';
+    p.then(() => toast(forSave ? 'Salvato su Drive ✓' : 'Aggiornato da Drive ✓', 'ok'), (e) => toast(sync.friendlyError(e), 'error', 5000)).finally(() => { invite.disabled = false; });
+  } } }, h('span.di-ico', { 'aria-hidden': 'true' }, '☁'), inviteText);
   document.body.append(invite);
   const updSync = (st = sync.state) => {
     invite.hidden = !(st.configured && st.folder && st.needsAuth && !st.running && navigator.onLine);
     document.body.classList.toggle('has-invite', !invite.hidden);
     if (!st.configured || !st.folder) { syncInd.textContent = 'Sul telefono'; syncInd.className = 'sync-ind local'; return; }
     if (st.running) { syncInd.textContent = 'Drive ✓ · salvo…'; syncInd.className = 'sync-ind syncing'; return; }
-    if (st.needsAuth) { syncInd.textContent = 'Da salvare su Drive'; syncInd.className = 'sync-ind warn'; return; }
+    // accesso scaduto: testo adatto alla situazione (c'è qualcosa da salvare o solo da ricevere)
+    inviteText.textContent = st.needsAuthFor === 'update' ? 'Tocca per aggiornare da Drive' : 'Tocca per salvare su Drive';
+    if (st.needsAuth) { syncInd.textContent = st.needsAuthFor === 'update' ? 'Da aggiornare' : 'Da salvare su Drive'; syncInd.className = 'sync-ind warn'; return; }
     syncInd.textContent = 'Drive ✓'; syncInd.className = 'sync-ind synced';
   };
-  repo.bus.addEventListener('sync-state', (e) => updSync(e.detail));
+  repo.bus.addEventListener('sync-state', (e) => { if (!pulledShown) updSync(e.detail); });
+  // novità arrivate da un altro dispositivo: indicazione discreta per un paio di secondi
+  let pulledShown = null;
+  repo.bus.addEventListener('pulled', () => {
+    clearTimeout(pulledShown);
+    syncInd.textContent = 'Aggiornato da Drive ✓'; syncInd.className = 'sync-ind synced pulled';
+    pulledShown = setTimeout(() => { pulledShown = null; updSync(); }, 2500);
+  });
   window.addEventListener('online', () => updSync());
   window.addEventListener('offline', () => updSync());
   updSync();

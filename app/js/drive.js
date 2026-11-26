@@ -109,6 +109,8 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       if (parentId) query = `'${qEsc(parentId)}' in parents and ` + query;
       let files = await listAll(query, 'files(id,name,createdTime,parents,appProperties)');
       if (parentId) files = files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(parentId));
+      // difesa: solo cartelle con l'etichetta richiesta (se Drive le restituisce)
+      files = files.filter((f) => !f.appProperties || f.appProperties.rcKind === kind);
       return files.sort((a, b) => String(a.createdTime || '').localeCompare(String(b.createdTime || '')) || String(a.id).localeCompare(String(b.id)));
     },
 
@@ -160,7 +162,7 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       if (!fileId && parents) meta.parents = parents;
       if (fileId && untrash) meta.trashed = false;
       const { body, contentType } = buildMultipart(meta, mimeType, data);
-      const fields = 'id,name,webViewLink,modifiedTime,trashed';
+      const fields = 'id,name,webViewLink,modifiedTime,trashed,version';
       if (fileId) {
         const res = await request('PATCH', `${uploadBase}/files/${encodeURIComponent(fileId)}?${q({ uploadType: 'multipart', fields })}`, {
           body, headers: { 'Content-Type': contentType },
@@ -192,6 +194,16 @@ export const DATA_FOLDER_NAME = 'File per l\'app';
 export async function findOrCreateDataFolder(drive, parentId, appId = 'rugby-coach') {
   let found = await drive.listAppFolders({ appId, kind: 'dataFolder', parentId });
   let createdId = null;
+  if (!found.length) {
+    // spostata a mano fuori da "Rugby Coach"? è sempre quella creata dall'app: la si usa e la si rimette al suo posto
+    const anywhere = await drive.listAppFolders({ appId, kind: 'dataFolder' });
+    if (anywhere.length) {
+      const f = anywhere[0];
+      const from = (f.parents || []).filter((x) => x !== parentId).join(',');
+      try { await drive.moveFile(f.id, { addParents: parentId, removeParents: from || undefined }); } catch (e) { if (!(e instanceof DriveHttpError)) throw e; }
+      found = [{ ...f, parents: [parentId] }];
+    }
+  }
   if (!found.length) {
     const f = await drive.createFolder(DATA_FOLDER_NAME, { parentId, appProperties: { rcApp: appId, rcKind: 'dataFolder' } });
     createdId = f.id;

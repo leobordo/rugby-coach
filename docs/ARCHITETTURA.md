@@ -55,6 +55,19 @@ app/
   stesso id), una volta per avvio finché ne trova; idempotente, ripresa al giro dopo se interrotta, non blocca la coda.
   Durante la transizione ricerca, ripristino, eliminazioni e controllo duplicati guardano entrambe le cartelle
   (`listPersonal`; a parità di scheda vale il `.json` in "File per l'app"). I `.json` nuovi nascono nella sottocartella.
+- **Ricezione automatica** (v1.5.0, stesso account su più dispositivi): `pullFromDrive` fa UNA `files.list` su
+  "File per l'app" (più la cartella principale finché la migrazione non è finita) e confronta la `version` Drive di
+  ogni `.json` con `entry.jsonVersion` (versione comune, salvata dalla coda dopo ogni invio o ricezione): scarica solo
+  i file cambiati, in ordine eliminazioni → libreria/rosa → schede. Quando: all'avvio, al ritorno in primo piano
+  (visibilitychange/focus), al ritorno della rete, prima di ogni invio e ogni 2 minuti dal timer (a riposo: una sola
+  `files.list`, nessun download). Mai senza accesso valido (nessuna finestra Google aperta da sola); backoff su 403/429.
+  Un giro alla volta (`runNow` serializzato). Regola per scheda intera (`decideSheet`): vince la più recente; se
+  modificata da entrambe le parti dopo la versione comune, la perdente resta come copia `conflictCopy`
+  ("(conflitto del …)", nuovo id, nome file distinto). `beforeUpload`: prima di caricare una scheda con `.json` noto,
+  `files.get(version)`; se diversa dalla comune si riceve prima. Scheda aperta (`repo.isOpen`): non si tocca; la
+  pagina riceve `remote-update` e l'autosaver unisce campo per campo (`merge3`: i campi che si stanno scrivendo
+  restano; stesso campo cambiato da entrambi → copia di conflitto) con l'avviso "Aggiorna". Eliminata altrove mentre è
+  aperta: avviso con "Tienila" (stessi file, escono dal cestino) / "Chiudi".
 - **Nessun duplicato**: ogni file ha `appProperties { rcApp, rcKind, rcId, rcVariant }`; il `.json` elenca gli id dei
   suoi `.docx`. Prima di creare un file la coda fa `files.list` nella cartella e aggiorna (PATCH) quelli esistenti.
 - **Esempi** con id stabili: creati su Drive solo se mancano, mai sovrascritti finché non modificati.
@@ -86,6 +99,8 @@ app/
 npm test        # node --test: modello, migrazioni, merge, Tactic Board, XSS, .docx (+ LibreOffice), Drive/coda con fetch finto, condivisione, PWA
 npm run e2e     # Playwright + Chrome: pagine, persistenza, Tactic Board, offline, Drive finto (collegamento in un tocco,
                 # cartella ritrovata, invito al rinnovo), Condividi con canShare finto, assenza di gergo; più dispositivi
+  e2e-receive.mjs      # ricezione automatica su 3 dispositivi: timer, primo piano, scheda aperta, conflitto,
+                       # eliminazione/Tienila, scheda nuova, libreria/rosa, carico a riposo, accesso scaduto
   e2e-datafolder.mjs   # "File per l'app": migrazione da 1.4.1 (due telefoni insieme, interrotta e ripresa,
                        # eliminazione durante lo spostamento), telefono nuovo, nessun .json nella cartella principale
 ```

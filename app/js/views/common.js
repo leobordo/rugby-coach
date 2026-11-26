@@ -4,7 +4,7 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { openBoardEditor } from '../board/editor.js';
 import { safeThumb } from '../board/model.js';
-import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone } from '../model.js';
+import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
 
@@ -24,22 +24,105 @@ export function flushAll() { for (const a of active) a.flush(); }
 export function autosaver(rec, { delay = 500, onSaved } = {}) {
   let dirty = false;
   const pill = statusPill(rec.kind, rec.id);
+  const sheet = ['session', 'match', 'plan'].includes(rec.kind);
+  // ricezione da altri dispositivi mentre la scheda è aperta: base = versione caricata sullo schermo,
+  // remote = versione arrivata (i campi che si stanno scrivendo non vengono mai toccati)
+  let base = deepClone(rec);
+  let remote = null;
+  let copiedFor = null;
+  let removedRemote = false;
+  let closed = false;
+  let knownFiles = {};
+  let banner = null;
+  if (sheet) {
+    repo.setOpen(rec.kind, rec.id, true);
+    sync.getStatus(rec.kind, rec.id).then((e) => { if (e && e.files) knownFiles = { ...e.files }; }).catch(() => {});
+  }
+  const localChanges = () => dirty || !sameRecordContent(rec, base);
+
+  async function saveNow() {
+    if (closed) return;
+    if (removedRemote) { // si continua a scrivere su una scheda eliminata altrove: la si tiene
+      removedRemote = false; hideBanner();
+      await sync.reviveRecord(rec, knownFiles);
+      return;
+    }
+    if (remote) {
+      const { value, conflicts } = merge3(base, rec, remote.rec);
+      if (conflicts && copiedFor !== remote.key) {
+        copiedFor = remote.key;
+        await repo.save(conflictCopy(remote.rec), { touch: false }); // la versione dell'altro dispositivo non si perde
+        toast('Lo stesso campo era cambiato anche sull\'altro dispositivo: quella versione è tra le schede come copia.', 'info', 6000);
+      }
+      value.id = rec.id; value.kind = rec.kind;
+      await repo.save(value);
+      return;
+    }
+    await repo.save(rec);
+  }
   const doSave = debounce(async () => {
     dirty = false;
     try {
-      await repo.save(rec);
+      await saveNow();
       onSaved && onSaved(rec);
     } catch (e) {
       toast('Errore nel salvataggio locale: ' + e.message, 'error', 6000);
     }
   }, delay);
+
+  function hideBanner() { if (banner) { banner.remove(); banner = null; } }
+  function showBanner(text, actions) {
+    hideBanner();
+    banner = h('div.remote-banner', { role: 'status', 'aria-live': 'polite' }, h('span', text),
+      h('span.remote-actions', actions.map(([label, fn, primary]) => h('button.btn.small' + (primary ? '.primary' : ''), { type: 'button', on: { click: fn } }, label))));
+    document.body.append(banner);
+  }
+  const reload = () => { hideBanner(); window.dispatchEvent(new HashChangeEvent('hashchange')); };
+
+  const onRemote = async (ev) => {
+    const d = ev.detail || {};
+    if (closed || d.kind !== rec.kind || d.id !== rec.id || !d.rec) return;
+    if (sameRecordContent(rec, d.rec)) { if (sheet && d.version) await sync.noteRemoteVersion(rec.kind, rec.id, d.version, d.files); return; }
+    remote = { rec: d.rec, key: d.version || d.rec.updatedAt };
+    if (localChanges()) {
+      // modifiche in corso: si uniscono subito campo per campo (quello che si sta scrivendo resta)
+      if (doSave.pending()) doSave.flush(); else { await saveNow(); }
+      if (sheet && d.version) await sync.noteRemoteVersion(rec.kind, rec.id, d.version, d.files);
+    } else if (sheet && d.version) {
+      await sync.acceptRemote(rec.kind, rec.id, d.rec, d.version, d.files, d.folderId);
+    }
+    showBanner('Questa scheda è stata aggiornata su un altro dispositivo', [['Aggiorna', () => { api.flush(); setTimeout(reload, 50); }, true]]);
+  };
+  const onRemoved = (ev) => {
+    const d = ev.detail || {};
+    if (closed || !d.remote || d.kind !== rec.kind || d.id !== rec.id) return;
+    removedRemote = true;
+    showBanner('Eliminata su un altro dispositivo', [
+      ['Tienila', async () => { removedRemote = false; hideBanner(); dirty = false; await sync.reviveRecord(rec, knownFiles); toast('Scheda tenuta.', 'ok'); }, true],
+      ['Chiudi', () => { hideBanner(); closed = true; location.hash = rec.kind === 'exercise' ? '#/libreria' : '#/'; }],
+    ]);
+  };
+  const onEntry = (ev) => { const e = ev.detail; if (e && e.kind === rec.kind && e.id === rec.id && e.files && Object.keys(e.files).length) knownFiles = { ...e.files }; };
+  repo.bus.addEventListener('remote-update', onRemote);
+  repo.bus.addEventListener('removed', onRemoved);
+  repo.bus.addEventListener('sync-entry', onEntry);
+
   const api = {
     pill,
     // un elemento di esempio modificato dall'utente diventa suo (non verrà eliminato con "Elimina esempi")
-    changed() { if (rec.example) rec.example = false; dirty = true; pill.setUnsaved(); doSave(); },
-    flush() { if (dirty) doSave.flush(); },
+    changed() { if (closed) return; if (rec.example) rec.example = false; dirty = true; pill.setUnsaved(); doSave(); },
+    flush() { if (dirty && !closed) doSave.flush(); },
     isDirty() { return dirty; },
-    dispose() { api.flush(); active.delete(api); },
+    dispose() {
+      if (!removedRemote) api.flush();
+      closed = true;
+      active.delete(api);
+      hideBanner();
+      repo.bus.removeEventListener('remote-update', onRemote);
+      repo.bus.removeEventListener('removed', onRemoved);
+      repo.bus.removeEventListener('sync-entry', onEntry);
+      if (sheet) repo.setOpen(rec.kind, rec.id, false);
+    },
   };
   active.add(api);
   return api;
@@ -138,7 +221,9 @@ export function finishButton(saver, { label = '✓ Fine', back = '#/' } = {}) {
     const hadChanges = saver.isDirty();
     saver.flush();
     const st = sync.state;
-    const needToken = st.configured && st.folder && navigator.onLine && !sync.hasToken() && (hadChanges || sync.pendingCount() > 0);
+    const toSave = hadChanges || sync.pendingCount() > 0;
+    // accesso scaduto: il tocco lo rinnova anche solo per ricevere le novità dagli altri dispositivi
+    const needToken = st.configured && st.folder && navigator.onLine && !sync.hasToken() && (toSave || sync.googleReady());
     if (needToken && !sync.googleReady()) { sync.preloadGoogle(); toast('Un attimo… tocca di nuovo per salvare anche su Drive.', 'info'); return; }
     const p = needToken ? sync.syncNow() : null;
     btn.disabled = true;
