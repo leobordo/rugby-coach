@@ -834,3 +834,14 @@ function m3(base, local, remote, st) {
   st.conflicts++;
   return deepClone(local);
 }
+
+// ---------- Gruppi di allenatori ----------
+export const isGroupId = (id) => typeof id === 'string' && /^g_[A-Za-z0-9]{6,40}$/.test(id);
+// ambito di un elemento: null = personale, altrimenti l'id del gruppo
+export const scopeOf = (rec) => (rec && isGroupId(rec.groupId) ? rec.groupId : null);
+// "Marco" per gli elementi di un gruppo (nome, o la parte prima della @)
+export function authorName(who) {
+  if (!who) return '';
+  const n = String(who.name || '').trim();
+  return (n || String(who.email || '').split('@')[0]).slice(0, 60);
+}

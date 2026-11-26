@@ -103,6 +103,25 @@ export function createDriveClient({ fetch: fetchFn, getToken, onUnauthorized,
       return folderId ? files.filter((f) => !Array.isArray(f.parents) || f.parents.includes(folderId)) : files;
     },
 
+    // ----- permessi (gruppi: invito con link, membri) -----
+    async createPermission(fileId, perm, { sendNotificationEmail = false } = {}) {
+      const params = { fields: 'id,type,role,emailAddress' };
+      if (perm.type === 'user' || perm.type === 'group') params.sendNotificationEmail = String(!!sendNotificationEmail);
+      return request('POST', `${apiBase}/files/${encodeURIComponent(fileId)}/permissions?${q(params)}`, {
+        body: JSON.stringify(perm), headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      });
+    },
+    async listPermissions(fileId) {
+      const res = await request('GET', `${apiBase}/files/${encodeURIComponent(fileId)}/permissions?${q({ fields: 'permissions(id,type,role,emailAddress)' })}`);
+      return (res && res.permissions) || [];
+    },
+    async deletePermission(fileId, permId) {
+      try { await request('DELETE', `${apiBase}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permId)}?${q({})}`); return true; } catch (e) {
+        if (e instanceof DriveHttpError && e.status === 404) return false;
+        throw e;
+      }
+    },
+
     // Cartelle create dall'app (appProperties rcKind=folder | dataFolder), dalla più vecchia
     async listAppFolders({ appId = 'rugby-coach', kind = 'folder', parentId } = {}) {
       let query = `mimeType='${FOLDER_MIME}' and appProperties has { key='rcApp' and value='${qEsc(appId)}' } and appProperties has { key='rcKind' and value='${qEsc(kind)}' } and trashed=false`;

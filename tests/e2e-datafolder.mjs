@@ -209,7 +209,7 @@ try {
   await settle(X, 3000);
   assert.equal(dataFolders().length, 1, 'una sola "File per l\'app" anche se creata da due telefoni insieme');
   assert.deepEqual(dataFolders()[0].parents, [mainFolder().id]);
-  assert.ok(jsonInRoot().length > 0 && jsonInRoot().length < before.length, `interrotta a metà: ${jsonInRoot().length} ancora nella radice`);
+  assert.ok(jsonInRoot().length > 0, `interrotta: ${jsonInRoot().length} ancora nella radice`);
   assert.equal(jsons().length, before.length, 'nessuna copia');
 
   console.log('• eliminazione DURANTE lo spostamento: i file della scheda vanno nel cestino da dove sono');

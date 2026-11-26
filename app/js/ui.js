@@ -68,10 +68,10 @@ export function modal({ title, content, actions = [{ label: 'Chiudi', value: nul
     dlg._close = close;
     dlg.showModal();
     // focus: primo campo, altrimenti il pulsante sicuro (Annulla) per le conferme pericolose, o il principale
-    const first = dlg.querySelector('input:not([type=checkbox]), textarea, select');
+    const first = dlg.querySelector('input:not([type=hidden]), textarea, select');
     const btns = [...footer.querySelectorAll('button')];
     const target = first || (focus === 'cancel' ? btns[0] : btns.find((b) => b.classList.contains('primary') || b.classList.contains('danger')) || btns[btns.length - 1]);
-    if (target) setTimeout(() => target.focus(), 30);
+    if (target) target.focus(); // subito: un Tab immediato parte già dal punto giusto
   });
 }
 

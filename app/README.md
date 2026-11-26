@@ -91,6 +91,43 @@ all'app e ogni pochi minuti mentre è aperta (serve la rete). In alto compare pe
 - Se è passato molto tempo compare **Tocca per aggiornare da Drive**: toccalo per ricevere le novità (l'app non apre
   mai da sola la finestra di Google).
 
+## Lavorare in gruppo
+
+Con gli altri allenatori della tua categoria puoi condividere **libreria esercizi, piani, allenamenti, partite e
+rosa**. Serve Google Drive collegato (ognuno con il proprio account Google).
+
+- **Creare un gruppo**: **Impostazioni › Gruppi di allenatori › + Crea un gruppo**, scegli nome (es. "Squadra U12")
+  e categoria. Nel tuo Drive compare la cartella **Rugby Coach – Squadra U12**: lì ci sono i documenti Word del
+  gruppo, che vedono tutti i membri. La sottocartella **File per l'app** serve all'app: non aprirla e non modificarla.
+- **Invitare**: nella pagina del gruppo tocca **↗ Invita con un messaggio** e manda il link (WhatsApp, email…).
+- **Entrare**: apri il link sul telefono (va bene anche se non hai mai usato l'app), tocca **Accedi con Google**,
+  poi **Apri i file del gruppo**: nella finestra di Google selezionali **tutti** e tocca **Seleziona**.
+  Se nella finestra non vedi nessun file, chiedi a chi ha creato il gruppo di invitarti **per email** (la tua Gmail),
+  poi riapri il link.
+- **Usare il gruppo**: in alto a Schede, Libreria e Rosa scegli **Personale** o il nome del gruppo; quello che crei
+  lì nasce nel gruppo. In ogni scheda, esercizio o giocatore **Dove si trova** sposta tra Personale e il gruppo.
+  Accanto agli elementi del gruppo vedi **di Marco** (chi l'ha creato). Le modifiche degli altri arrivano da sole;
+  se stai scrivendo nella stessa scheda compare **Marco ha aggiornato questa scheda · Aggiorna** e quello che scrivi
+  resta. La prima volta che metti un giocatore nel gruppo l'app ti ricorda che sono nomi di minori.
+- **Eliminare**: tutti gli allenatori del gruppo possono modificare ed eliminare tutto. Nella pagina del gruppo,
+  **Eliminati di recente** mostra cosa è stato eliminato, da chi e quando; i documenti Word restano 30 giorni nel
+  cestino di Drive di chi li aveva creati.
+- **Chiudere gli inviti** (chi ha creato il gruppo): quando sono entrati tutti tocca **Chiudi gli inviti**: il link
+  non funziona più per nessun altro; per aggiungere qualcuno usa **Invita per email**. **Riapri gli inviti** fa il
+  contrario. Puoi anche **togliere** un allenatore dal gruppo.
+- **Togliere un allenatore**: se gli inviti sono aperti, l'app li chiude in automatico, così chi è stato tolto non
+  può rientrare col vecchio link (puoi riaprirli quando vuoi: chi è stato tolto rientra solo se lo inviti di nuovo
+  per email). Quando qualcuno è entrato, nella pagina del gruppo compare il promemoria **Tutti dentro? Chiudi gli inviti**.
+- **Uscire**: nella pagina del gruppo **Esci dal gruppo**: gli elementi del gruppo spariscono dal tuo dispositivo
+  (restano agli altri); le tue schede personali non cambiano.
+- **Sugli altri tuoi dispositivi**: il link del gruppo è sempre nella pagina del gruppo; aprilo sul computer o su un
+  altro telefono con lo stesso account Google per avere il gruppo anche lì.
+- **I documenti Word nella cartella del gruppo** li aggiorna chi ha creato ciascuna scheda, quando apre l'app: se ti
+  serve subito la versione più recente usa **↗ Condividi**, che crea sempre il documento aggiornato.
+- **Se chi ha creato il gruppo lo elimina** (o smette di usarlo), il gruppo non funziona più: l'app lo dice
+  ("Il gruppo è stato eliminato da …") e ti permette di **tenere una copia personale** degli elementi. Per continuare
+  a lavorare insieme, uno di voi crea un nuovo gruppo e invita gli altri.
+
 ## Domande frequenti
 
 **Posso usarla senza Internet?** Sì. Le schede si salvano sul telefono e vanno su Drive quando torna la rete.

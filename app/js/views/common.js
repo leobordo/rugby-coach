@@ -4,7 +4,7 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { openBoardEditor } from '../board/editor.js';
 import { safeThumb } from '../board/model.js';
-import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent } from '../model.js';
+import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
 
@@ -91,7 +91,8 @@ export function autosaver(rec, { delay = 500, onSaved } = {}) {
     } else if (sheet && d.version) {
       await sync.acceptRemote(rec.kind, rec.id, d.rec, d.version, d.files, d.folderId);
     }
-    showBanner('Questa scheda è stata aggiornata su un altro dispositivo', [['Aggiorna', () => { api.flush(); setTimeout(reload, 50); }, true]]);
+    const who = scopeOf(d.rec) && d.rec.updatedBy && (!sync.getMe() || d.rec.updatedBy.email !== sync.getMe().email) ? authorName(d.rec.updatedBy) : '';
+    showBanner(who ? `${who} ha aggiornato questa scheda` : 'Questa scheda è stata aggiornata su un altro dispositivo', [['Aggiorna', () => { api.flush(); setTimeout(reload, 50); }, true]]);
   };
   const onRemoved = (ev) => {
     const d = ev.detail || {};
@@ -333,3 +334,66 @@ export async function openPrepared(hash) {
   if (preparer) { try { await preparer(hash); } catch (e) { console.warn(e); } }
   location.hash = hash;
 }
+
+// ---------- gruppi: dove si trova un elemento, chi l'ha scritto, filtro rapido ----------
+const KIND_WORDS = { session: 'questo allenamento', match: 'questa partita', plan: 'questo piano', exercise: 'questo esercizio', player: 'questo giocatore' };
+
+// Avviso sui nomi dei minori, la prima volta che si condivide la rosa con un gruppo
+export async function confirmRosterShare(gid) {
+  const acks = (await repo.getSetting('rosterAck', {})) || {};
+  if (acks[gid]) return true;
+  const g = sync.groupById(gid);
+  const ok = await confirmDialog(`La rosa contiene nomi di bambini e ragazzi. Nel gruppo "${g ? g.name : ''}" la vedranno e potranno modificarla tutti gli allenatori del gruppo. Condividi solo i dati che servono per l'allenamento (nome e numero).`, { okText: 'Ho capito, condividi', title: 'Nomi dei minori' });
+  if (ok) await repo.setSetting('rosterAck', { ...acks, [gid]: new Date().toISOString() });
+  return ok;
+}
+
+// Selettore "Dove si trova: Personale / <gruppo>" per un elemento aperto (solo se si è in almeno un gruppo)
+export function scopeBar(rec, saver) {
+  const groups = sync.activeGroups();
+  const cur = scopeOf(rec);
+  if (!groups.length && !cur) return null;
+  const sel = h('select.input.scope-select', { 'aria-label': 'Dove si trova' },
+    h('option', { value: '' }, 'Personale (solo tu)'),
+    groups.map((g) => h('option', { value: g.id, selected: g.id === cur }, 'Gruppo ' + g.name)));
+  if (cur && !groups.some((g) => g.id === cur)) sel.append(h('option', { value: cur, selected: true, disabled: true }, 'Gruppo non disponibile'));
+  sel.addEventListener('change', async () => {
+    const to = sel.value || null;
+    const g = to ? sync.groupById(to) : sync.groupById(cur);
+    const what = KIND_WORDS[rec.kind] || 'questo elemento';
+    const msg = to ? `Spostare ${what} nel gruppo "${g ? g.name : ''}"? Lo vedranno e potranno modificarlo tutti gli allenatori del gruppo.`
+      : `Togliere ${what} dal gruppo "${g ? g.name : ''}"? Sparirà agli altri allenatori del gruppo e resterà solo tuo.`;
+    const ok = (await confirmDialog(msg, { okText: to ? 'Sposta nel gruppo' : 'Togli dal gruppo', title: 'Dove si trova' })) && (!to || rec.kind !== 'player' || await confirmRosterShare(to));
+    if (!ok) { sel.value = cur || ''; return; }
+    if (saver) saver.flush();
+    await sync.moveRecord(rec.kind, rec.id, to);
+    toast(to ? `Spostato nel gruppo "${g ? g.name : ''}".` : 'Ora è solo tuo.', 'ok');
+    window.dispatchEvent(new HashChangeEvent('hashchange')); // la pagina si ricarica con la nuova posizione
+  });
+  const by = cur && rec.createdBy ? h('small.scope-by', 'di ' + authorName(rec.createdBy) + (rec.updatedBy && rec.updatedBy.email !== rec.createdBy.email ? ' · modificato da ' + authorName(rec.updatedBy) : '')) : null;
+  return h('div.scope-bar', h('label.scope-label', h('span', 'Dove si trova'), sel), by);
+}
+
+// Riga "Gruppo X · di Marco" per le schede negli elenchi
+export function groupBadge(rec) {
+  const gid = scopeOf(rec);
+  if (!gid) return null;
+  const g = sync.groupById(gid);
+  const by = rec.createdBy ? 'di ' + authorName(rec.createdBy) : '';
+  return h('span.badge.group', { title: g ? 'Gruppo ' + g.name : '' }, [g ? g.name : 'Gruppo', by].filter(Boolean).join(' · '));
+}
+
+// Filtro rapido negli elenchi: Tutto / Personale / <gruppo> (solo se si è in almeno un gruppo)
+export function scopeFilter(current, onChange) {
+  const groups = sync.activeGroups();
+  if (!groups.length) return null;
+  const opts = [['all', 'Tutto'], ['personal', 'Personale'], ...groups.map((g) => [g.id, g.name])];
+  return h('div.scope-filter', { role: 'group', 'aria-label': 'Mostra' }, opts.map(([v, label]) => h('button.chip' + (v === current ? '.on' : ''), {
+    type: 'button', 'aria-pressed': String(v === current), on: { click: () => onChange(v) } }, label)));
+}
+export function matchScope(rec, filter) {
+  if (!filter || filter === 'all') return true;
+  return filter === 'personal' ? !scopeOf(rec) : scopeOf(rec) === filter;
+}
+// ambito per un elemento nuovo creato da un elenco filtrato
+export const newScopeFrom = (filter) => (filter && filter !== 'all' && filter !== 'personal' && sync.groupById(filter) ? filter : null);

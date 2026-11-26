@@ -9,7 +9,7 @@
 // Esempi precaricati (record.example === true, id stabili): non sovrascrivono mai un file remoto;
 // vengono creati solo se nella cartella non esistono ancora.
 import { DriveAuthError, DriveHttpError, DriveOfflineError } from './drive.js';
-import { APP_ID } from './model.js';
+import { APP_ID, isGroupId } from './model.js';
 
 export const SYNC_STATUS = { PENDING: 'pending', SYNCING: 'syncing', SYNCED: 'synced', ERROR: 'error' };
 
@@ -28,7 +28,8 @@ export function remoteIdentity(kind, id) {
 // Da appProperties di un file remoto alla chiave locale della coda
 export function localKeyOfRemote(ap) {
   if (!ap || ap.rcApp !== APP_ID || !ap.rcKind || !ap.rcId) return null;
-  if (ap.rcId === COLLECTION_ID && REMOTE_TO_COLLECTION[ap.rcKind]) return syncKey(REMOTE_TO_COLLECTION[ap.rcKind], COLLECTION_ID);
+  // raccolte: 'all' = personali, 'g_…' = di un gruppo (libreria del gruppo)
+  if ((ap.rcId === COLLECTION_ID || isGroupId(ap.rcId)) && REMOTE_TO_COLLECTION[ap.rcKind]) return syncKey(REMOTE_TO_COLLECTION[ap.rcKind], ap.rcId);
   return syncKey(ap.rcKind, ap.rcId);
 }
 
@@ -71,6 +72,9 @@ export function createSyncEngine({
   // prima di caricare una scheda già su Drive: se lì c'è una versione più recente non ancora ricevuta, la si
   // unisce prima. Restituisce { skip: true } se dopo l'unione non c'è più nulla da caricare.
   beforeUpload = null,
+  // dove va una scheda: { folderId, docx, json, skip, keepOthers } (personale: cartella Rugby Coach; gruppo: cartella
+  // del gruppo, .docx solo se lo scrive questo allenatore, nessun .json: i dati del gruppo stanno nei suoi file fissi)
+  targetFor = null,
 }) {
   let running = null;
 
@@ -166,7 +170,7 @@ export function createSyncEngine({
 
   async function trashOne(entry, ctx) {
     const files = { ...(entry.files || {}) };
-    const remote = (await ctx.remoteIndex()).get(entry.key) || {};
+    const remote = (await ctx.remoteIndex(entry.folderId || undefined)).get(entry.key) || {};
     const ids = new Set([...Object.values(files), ...Object.values(remote)].filter(Boolean));
     for (const id of ids) await drive.trashFile(id);
     const latest = (await store.get(entry.key)) || entry;
@@ -178,16 +182,25 @@ export function createSyncEngine({
     if (entry.deleted) return trashOne(entry, ctx);
     const record = await getRecord(entry.kind, entry.id);
     if (!record) { await store.delete(entry.key); return 'deleted'; }
+    const target = targetFor ? await targetFor(entry, record, folderId) : { folderId, docx: true, json: true };
+    if (target.skip) { await store.delete(entry.key); onChange({ key: entry.key, kind: entry.kind, id: entry.id, status: null }); return 'deleted'; }
+    const tFolder = target.folderId;
     const startedRev = entry.rev;
     entry.status = SYNC_STATUS.SYNCING;
     await store.put(entry); onChange(entry);
-    const files = { ...entry.files };
+    let files = { ...entry.files };
     let jsonVersion = entry.jsonVersion || null;
-    const links = { ...(entry.links || {}) };
+    let links = { ...(entry.links || {}) };
+    // la scheda ha cambiato cartella (spostata tra Personale e un gruppo): i suoi file nella vecchia cartella
+    // vanno nel cestino (anche il .json personale: non deve tornare dal recupero)
+    if (entry.folderId && entry.folderId !== tFolder) {
+      for (const id of Object.values(files)) if (id) await drive.trashFile(id);
+      files = {}; links = {}; jsonVersion = null;
+    }
     // primo invio da questo dispositivo (o cartella cambiata): cerca i file già esistenti della scheda
     let remote = {};
-    if (!files.json || entry.folderId !== folderId) {
-      remote = (await ctx.remoteIndex()).get(entry.key) || {};
+    if (!Object.keys(files).length || !files.json && target.json !== false || entry.folderId !== tFolder) {
+      remote = (await ctx.remoteIndex(tFolder)).get(entry.key) || {};
     }
     for (const [k, v] of Object.entries(remote)) if (!files[k]) files[k] = v;
     const hasRemote = Object.keys(remote).length > 0;
@@ -207,20 +220,22 @@ export function createSyncEngine({
     if (record2.example && (hasRemote || knewFiles || record2.placeholder)) {
       // esempio non modificato: non sovrascrive mai, adotta i file che esistono già
     } else {
-      const artifacts = await buildArtifacts(entry.kind, record2, { known: { ...entry.files }, remote });
+      const artifacts = (await buildArtifacts(entry.kind, record2, { known: { ...entry.files }, remote }))
+        .filter((a) => (a.key === 'json' ? target.json !== false : target.docx !== false));
       const keys = new Set(artifacts.map((a) => a.key));
+      const trashStale = async () => { for (const k of Object.keys(files)) if (!keys.has(k) && files[k]) { await drive.trashFile(files[k]); delete files[k]; delete links[k]; } };
+      let staleDone = false;
       // i .docx prima del .json (così il .json elenca i loro id)
       const ordered = [...artifacts.filter((a) => a.key !== 'json'), ...artifacts.filter((a) => a.key === 'json')];
       for (const art of ordered) {
-        if (art.key === 'json') {
-          // documenti non più prodotti (es. il vecchio .docx dell'osservazione, ora unito): nel cestino
-          for (const k of Object.keys(files)) if (!keys.has(k) && files[k]) { await drive.trashFile(files[k]); delete files[k]; delete links[k]; }
-        }
-        const res = await uploadArtifact(entry, art, art.key === 'json' ? ctx.jsonFolderId : folderId, files);
+        // documenti non più prodotti (es. il vecchio .docx dell'osservazione, ora unito): nel cestino
+        if (art.key === 'json') { await trashStale(); staleDone = true; }
+        const res = await uploadArtifact(entry, art, art.key === 'json' ? ctx.jsonFolderId : tFolder, files);
         files[art.key] = res.id;
         if (art.key === 'json') jsonVersion = res && res.version != null ? String(res.version) : null;
         if (res.webViewLink) links[art.key] = res.webViewLink;
       }
+      if (!staleDone && !target.keepOthers) await trashStale();
     }
     // rilegge: se la scheda è stata modificata durante l'upload resta in attesa
     const latest = (await store.get(entry.key)) || entry;
@@ -228,7 +243,7 @@ export function createSyncEngine({
     latest.links = links;
     latest.error = null;
     latest.attempts = 0;
-    latest.folderId = folderId;
+    latest.folderId = tFolder;
     latest.jsonVersion = jsonVersion;
     if (latest.rev === startedRev) {
       latest.status = SYNC_STATUS.SYNCED;
@@ -252,15 +267,17 @@ export function createSyncEngine({
     const todo = all.filter((e) => force || e.status !== SYNC_STATUS.ERROR || (e.nextAttemptAt || 0) <= t)
       .sort((a, b) => (a.dirtyAt || 0) - (b.dirtyAt || 0));
     // una sola files.list per giro, e solo se serve
-    let idx = null;
+    const idx = new Map(); // una files.list per cartella e per giro, e solo se serve
     const ctx = {
       jsonFolderId,
-      remoteIndex: () => {
-        if (!idx) {
-          idx = (listRemote ? listRemote(folderId) : drive.listAppFiles ? drive.listAppFiles(folderId) : Promise.resolve([])).then(buildRemoteIndex);
-          idx.catch(() => { idx = null; });
+      remoteIndex: (fid = folderId) => {
+        if (!idx.has(fid)) {
+          const lister = fid === folderId && listRemote ? listRemote(folderId) : drive.listAppFiles ? drive.listAppFiles(fid) : Promise.resolve([]);
+          const p = lister.then(buildRemoteIndex);
+          p.catch(() => idx.delete(fid));
+          idx.set(fid, p);
         }
-        return idx;
+        return idx.get(fid);
       },
     };
     for (const entry of todo) {

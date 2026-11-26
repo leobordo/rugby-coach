@@ -655,3 +655,28 @@ dialog.modal :focus-visible { outline: 3px solid #1565c0; outline-offset: 2px; }
 .remote-banner .btn.small { min-height: 44px; min-width: 44px; }
 .sync-ind.pulled { animation: rc-pulse 1.2s ease-out 1; }
 @keyframes rc-pulse { from { box-shadow: 0 0 0 0 rgba(255,255,255,.8); } to { box-shadow: 0 0 0 10px rgba(255,255,255,0); } }
+
+/* v1.6.0: gruppi di allenatori */
+.scope-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 10px; }
+.scope-label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.scope-select { min-height: 44px; max-width: 100%; }
+.scope-by { color: #555; }
+.scope-box:empty { display: none; }
+.scope-filter { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.scope-filter .chip { min-height: 44px; padding: 0 14px; border-radius: 22px; border: 2px solid #1b5e20; background: #fff; color: #1b5e20; font-weight: 600; }
+.scope-filter .chip.on { background: #1b5e20; color: #fff; }
+.badge.group { background: #e3f2fd; color: #0d3c61; border: 1px solid #90caf9; }
+.group-list, .member-list { list-style: none; padding: 0; margin: 8px 0 12px; display: grid; gap: 8px; }
+.group-item { display: flex; flex-direction: column; gap: 2px; min-height: 44px; padding: 10px 12px; border: 2px solid #c8d6c8; border-radius: 10px; text-decoration: none; color: inherit; }
+.member-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.member-list li small { color: #555; }
+.invite-link { width: 100%; margin-top: 10px; font-size: 14px; }
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.inline-form .input { flex: 1 1 220px; }
+.join-card .btn.big { margin-top: 8px; }
+.join-msg { margin-top: 10px; font-weight: 600; }
+.player-row .scope-bar { margin: 0; }
+.player-row .scope-label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.banner.reminder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: #fff8e1; border: 2px solid #c79a00; border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+.group-item small.reminder { color: #8a5a00; font-weight: 700; }

@@ -68,6 +68,36 @@ app/
   pagina riceve `remote-update` e l'autosaver unisce campo per campo (`merge3`: i campi che si stanno scrivendo
   restano; stesso campo cambiato da entrambi → copia di conflitto) con l'avviso "Aggiorna". Eliminata altrove mentre è
   aperta: avviso con "Tienila" (stessi file, escono dal cestino) / "Chiudi".
+- **Gruppi di allenatori** (v1.6.0, `groups.js` + `app-sync.js` + `views/groups.js`): con `drive.file` l'app vede solo
+  i file creati da lei per quell'utente o scelti nel Picker, quindi ogni gruppo ha un INSIEME FISSO di file creati
+  alla creazione nella cartella `Rugby Coach – <nome>` (radice del Drive di chi crea) › `File per l'app`: `gruppo.json`
+  (manifest: nome, categoria, id dei file, membri, rimossi, invitati per email, inviti aperti/chiusi), `libreria.json`,
+  `piani.json`, `schede.json` (sedute + partite), `rosa.json`. Ogni file porta elementi, tombstone e il registro
+  "chi ha eliminato cosa". Sulla cartella: permesso `anyone/writer` (inviti aperti). Link di invito
+  `#/unisciti?g=<manifest>&f=<4 file>&d=<sottocartella>&c=<cartella>&n=<nome>&a=<amministratore>`; chi entra apre
+  il Picker (`DocsView.setFileIds`, multiselezione, cartelle incluse, dentro il tocco, dimensionato sullo schermo),
+  seleziona i 7 elementi una volta; l'app scrive il membro nel manifest (unione per email, controllo `version`).
+  Chiudi inviti: permessi `user/writer` per membri e invitati, poi via `anyone`; riapri: di nuovo `anyone`;
+  togli membro: `removed` nel manifest + permesso tolto; esci: `removed` (left) e pulizia locale.
+  Ricezione: stesso giro della v1.5 (`runOnce` → `runGroups` dopo la ricezione personale): per ogni gruppo
+  `files.get(version)` del manifest e dei 4 file, download solo se cambiati, unione per elemento
+  (`repo.mergeRemoteCollection` con ambito = gruppo: mai toccati elementi di altri ambiti), invio con controllo della
+  versione prima del PATCH (`syncPart`), stato "da inviare" per file (`gdirty`). Conflitti sulle schede (stessa scheda
+  cambiata qui e da un altro dopo l'ultima versione vista, `gbase`): vince la più recente, l'altra resta nel gruppo
+  come copia "(conflitto del …)"; scheda aperta: unione campo per campo nella pagina, avviso "<nome> ha aggiornato
+  questa scheda". Ambito di un elemento: `groupId` (`scopeOf`); `createdBy`/`updatedBy` {email, nome} per "di <nome>".
+  Word: con drive.file solo chi ha creato un documento lo aggiorna, quindi il Word di una scheda del gruppo lo scrive
+  il suo autore (lo rigenera quando riceve modifiche altrui), quello della libreria del gruppo l'amministratore;
+  vanno nella cartella del gruppo (`targetFor`). Spostare tra Personale e gruppo = tombstone nel vecchio ambito +
+  modifica recente nel nuovo; i file nella vecchia cartella vanno nel cestino. Eliminazioni: tutti i membri possono
+  modificare ed eliminare tutto (scelta semplice); il registro mostra chi ha eliminato cosa ("Eliminati di recente").
+  v1.6.1: un membro tolto (`removed`, non `left`) è rifiutato da `joinGroup` (`isBanned`) finché l'amministratore non
+  lo invita di nuovo per email (`invited.at` > `removed.at`); togliere un membro con inviti aperti li chiude subito
+  (permessi espliciti agli altri, via `anyone`) e toglie il suo permesso esplicito. Limite di Drive: a inviti
+  riaperti chi è stato tolto potrebbe ancora aprire i file dal Picker; l'app non lo rimette tra i membri e non scrive.
+  Cartella del gruppo nel cestino (manifest `trashed`) → stato `deleted`: "Il gruppo è stato eliminato da <nome>",
+  con "Tieni una copia personale" (`keepGroupCopy`). Home: l'elenco non si ricarica mentre un menu ⋯ o una finestra
+  è aperta (rimandato alla chiusura).
 - **Nessun duplicato**: ogni file ha `appProperties { rcApp, rcKind, rcId, rcVariant }`; il `.json` elenca gli id dei
   suoi `.docx`. Prima di creare un file la coda fa `files.list` nella cartella e aggiorna (PATCH) quelli esistenti.
 - **Esempi** con id stabili: creati su Drive solo se mancano, mai sovrascritti finché non modificati.
@@ -99,6 +129,9 @@ app/
 npm test        # node --test: modello, migrazioni, merge, Tactic Board, XSS, .docx (+ LibreOffice), Drive/coda con fetch finto, condivisione, PWA
 npm run e2e     # Playwright + Chrome: pagine, persistenza, Tactic Board, offline, Drive finto (collegamento in un tocco,
                 # cartella ritrovata, invito al rinnovo), Condividi con canShare finto, assenza di gergo; più dispositivi
+  e2e-groups.mjs       # gruppi: 4 utenti (crea/invita, ingresso al primo avvio e con app in uso, unione e ricezione,
+                       # eliminazione, chiusura inviti, invito per email, rimozione, uscita, minori, XSS, gergo)
+  groups.test.mjs      # nucleo dei gruppi con Drive finto multi-utente (drive.file + permessi: fake-drive.mjs)
   e2e-receive.mjs      # ricezione automatica su 3 dispositivi: timer, primo piano, scheda aperta, conflitto,
                        # eliminazione/Tienila, scheda nuova, libreria/rosa, carico a riposo, accesso scaduto
   e2e-datafolder.mjs   # "File per l'app": migrazione da 1.4.1 (due telefoni insieme, interrotta e ripresa,

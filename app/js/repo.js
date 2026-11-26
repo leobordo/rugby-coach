@@ -1,6 +1,6 @@
 // Accesso ai dati: CRUD dei record, impostazioni, export/import, seed. Emette eventi su `bus`.
 import { openDB } from './db.js';
-import { STORE_OF_KIND, SYNCABLE_KINDS, COLLECTION_OF_KIND, nowISO, buildBackup, parseBackup, mergeDecision, migrateRecord, mergeCollection, SCHEMA_VERSION } from './model.js';
+import { STORE_OF_KIND, SYNCABLE_KINDS, COLLECTION_OF_KIND, nowISO, buildBackup, parseBackup, mergeDecision, migrateRecord, mergeCollection, SCHEMA_VERSION, scopeOf, isGroupId, recordTitle } from './model.js';
 import { buildSeed } from './seed.js';
 
 export const bus = new EventTarget();
@@ -10,6 +10,8 @@ let db = null;
 let dirtyHook = null;
 let forgetHook = null;
 let deleteHook = null;
+let groupHook = null;
+let identity = null; // { email, name } dell'allenatore: "di <nome>" negli elementi dei gruppi
 
 // copia in memoria delle impostazioni (lettura sincrona per le pagine che devono comparire subito)
 const settingsCache = new Map();
@@ -21,7 +23,9 @@ export async function initRepo(idb) {
 }
 export function peekSetting(key, def = null) { return settingsCache.has(key) ? settingsCache.get(key) : def; }
 export function getDB() { return db; }
-export function setSyncHooks({ onDirty, onForget, onDelete }) { dirtyHook = onDirty; forgetHook = onForget; deleteHook = onDelete; }
+export function setSyncHooks({ onDirty, onForget, onDelete, onGroupDirty }) { dirtyHook = onDirty; forgetHook = onForget; deleteHook = onDelete; groupHook = onGroupDirty || null; }
+export function setIdentity(me) { identity = me && me.email ? { email: String(me.email).toLowerCase(), name: String(me.name || '').slice(0, 80) } : null; }
+export function getIdentity() { return identity; }
 
 export async function list(kind) {
   const all = await db.getAll(STORE_OF_KIND[kind]);
@@ -35,37 +39,97 @@ export async function get(kind, id) {
 }
 
 export async function save(rec, { touch = true, sync = true } = {}) {
-  if (touch) rec.updatedAt = nowISO();
+  const gid = scopeOf(rec);
+  if (!gid && 'groupId' in rec) delete rec.groupId;
+  if (touch) {
+    rec.updatedAt = nowISO();
+    // negli elementi di un gruppo si ricorda chi li ha creati e chi li ha modificati per ultimo
+    if (gid && identity) { rec.updatedBy = { ...identity }; if (!rec.createdBy) rec.createdBy = { ...identity }; }
+  }
   await db.put(STORE_OF_KIND[rec.kind], rec);
   emit('saved', { kind: rec.kind, id: rec.id, rec });
-  if (sync && dirtyHook) {
-    if (SYNCABLE_KINDS.includes(rec.kind)) await dirtyHook(rec.kind, rec.id);
-    else if (COLLECTION_OF_KIND[rec.kind]) await dirtyHook(COLLECTION_OF_KIND[rec.kind], 'all');
-  }
+  if (sync) await afterChange(rec.kind, rec.id, gid);
   return rec;
 }
 
-// Tombstone delle raccolte: { exercise: { id: deletedAt }, player: { ... } } — servono a propagare le cancellazioni
-export async function getTombstones(kind) {
+async function afterChange(kind, id, gid) {
+  if (gid && groupHook) await groupHook(gid, kind);
+  if (!dirtyHook) return;
+  if (SYNCABLE_KINDS.includes(kind)) await dirtyHook(kind, id);
+  else if (COLLECTION_OF_KIND[kind]) await dirtyHook(COLLECTION_OF_KIND[kind], gid || 'all');
+}
+
+// Elementi di un ambito: null = personali, altrimenti quelli del gruppo
+export async function listScope(kind, gid = null) {
+  return (await list(kind)).filter((r) => scopeOf(r) === (gid || null));
+}
+
+// Sposta un elemento tra "Personale" e un gruppo (o tra gruppi). Nel vecchio ambito resta una tombstone,
+// così sugli altri dispositivi / per gli altri allenatori sparisce da lì; nel nuovo arriva come modifica recente.
+export async function moveTo(kind, id, gid) {
+  const rec = await get(kind, id);
+  if (!rec) return null;
+  const from = scopeOf(rec);
+  const to = isGroupId(gid) ? gid : null;
+  if (from === to) return rec;
+  await setTombstones(kind, { ...(await getTombstones(kind, from)), [id]: nowISO() }, from);
+  if (from) await logGroupDeletion(from, rec, 'moved');
+  if (to) { rec.groupId = to; if (identity) rec.createdBy = { ...identity }; } else { delete rec.groupId; delete rec.createdBy; delete rec.updatedBy; }
+  if (to) { const t = await getTombstones(kind, to); if (t[id]) { delete t[id]; await setTombstones(kind, t, to); } }
+  await new Promise((r) => setTimeout(r, 3)); // la modifica è sempre più recente della tombstone appena scritta
+  await save(rec);
+  if (from && groupHook) await groupHook(from, kind);
+  if (dirtyHook) {
+    if (COLLECTION_OF_KIND[kind]) await dirtyHook(COLLECTION_OF_KIND[kind], from || 'all');
+    if (SYNCABLE_KINDS.includes(kind) && !from) await dirtyHook('deleted', 'all');
+  }
+  emit('moved', { kind, id, from, to });
+  return rec;
+}
+
+// "Cestino" del gruppo: chi ha eliminato cosa e quando (viaggia nei file del gruppo)
+async function logGroupDeletion(gid, rec, how = 'deleted') {
+  const all = (await getSetting('gdellog', {})) || {};
+  const log = { ...(all[gid] || {}) };
+  log[rec.id] = { kind: rec.kind, title: String(recordTitle(rec) || '').slice(0, 120), date: rec.date || '', by: identity ? { ...identity } : null, at: nowISO(), how };
+  await setSetting('gdellog', { ...all, [gid]: log });
+}
+export async function getGroupDeletedLog(gid) { return { ...((((await getSetting('gdellog', {})) || {})[gid]) || {}) }; }
+export async function setGroupDeletedLog(gid, log) { const all = (await getSetting('gdellog', {})) || {}; await setSetting('gdellog', { ...all, [gid]: log }); }
+
+// Tombstone: { id: deletedAt } per tipo. Personali in 'tombstones'; dei gruppi in 'gtombs' { gid: { kind: {...} } }
+export async function getTombstones(kind, gid = null) {
+  if (gid) { const all = (await getSetting('gtombs', {})) || {}; return { ...((all[gid] || {})[kind] || {}) }; }
   const all = (await getSetting('tombstones', {})) || {};
   return { ...(all[kind] || {}) };
 }
-export async function setTombstones(kind, tombs) {
+export async function setTombstones(kind, tombs, gid = null) {
+  if (gid) {
+    const all = (await getSetting('gtombs', {})) || {};
+    await setSetting('gtombs', { ...all, [gid]: { ...(all[gid] || {}), [kind]: tombs } });
+    return;
+  }
   const all = (await getSetting('tombstones', {})) || {};
   await setSetting('tombstones', { ...all, [kind]: tombs });
 }
+export async function getGroupTombstones(gid) { return { ...(((await getSetting('gtombs', {})) || {})[gid] || {}) }; }
 
 // Elimina dal telefono e (se collegato) da Google Drive: le schede vanno nella coda di eliminazione (i loro file
 // finiranno nel cestino di Drive) e ricevono una tombstone, così non "resuscitano" dal recupero su altri telefoni.
 // Esercizi e giocatori: tombstone + la raccolta (libreria / rosa) viene rigenerata senza l'elemento.
+// Elementi di un gruppo: la tombstone va nei file del gruppo (gli altri allenatori lo vedono sparire).
 export async function remove(kind, id) {
+  const rec = await db.get(STORE_OF_KIND[kind], id);
+  const gid = scopeOf(rec);
   await db.delete(STORE_OF_KIND[kind], id);
-  if (COLLECTION_OF_KIND[kind] || SYNCABLE_KINDS.includes(kind)) await setTombstones(kind, { ...(await getTombstones(kind)), [id]: nowISO() });
+  if (COLLECTION_OF_KIND[kind] || SYNCABLE_KINDS.includes(kind)) await setTombstones(kind, { ...(await getTombstones(kind, gid)), [id]: nowISO() }, gid);
+  if (gid && rec) await logGroupDeletion(gid, rec);
   if (SYNCABLE_KINDS.includes(kind)) {
-    if (deleteHook) await deleteHook(kind, id);
+    if (deleteHook) await deleteHook(kind, id, gid);
     else if (forgetHook) await forgetHook(kind, id);
   }
-  if (dirtyHook && COLLECTION_OF_KIND[kind]) await dirtyHook(COLLECTION_OF_KIND[kind], 'all');
+  if (dirtyHook && COLLECTION_OF_KIND[kind]) await dirtyHook(COLLECTION_OF_KIND[kind], gid || 'all');
+  if (gid && groupHook) await groupHook(gid, kind);
   emit('removed', { kind, id });
 }
 
@@ -121,16 +185,24 @@ export async function importBackup(json, { sync = true } = {}) {
   return res;
 }
 
-// Unisce una raccolta remota (libreria o rosa) con quella locale e applica il risultato in locale
-// (senza rimettere in coda). Restituisce l'esito di mergeCollection.
-export async function mergeRemoteCollection(kind, remoteItems, remoteTombs) {
+// Unisce elementi remoti di un ambito (personale: libreria o rosa; gruppo: uno dei suoi file dati) con quelli
+// locali e applica il risultato in locale (senza rimettere in coda). Gli elementi locali di ALTRI ambiti non
+// vengono mai cancellati da qui; se hanno lo stesso id di un elemento remoto vince la modifica più recente.
+export async function mergeRemoteCollection(kind, remoteItems, remoteTombs, { scope = null } = {}) {
   const store = STORE_OF_KIND[kind];
-  const local = await db.getAll(store);
-  const res = mergeCollection({ local, localTombs: await getTombstones(kind), remote: remoteItems.map((r) => migrateRecord({ kind, ...r })), remoteTombs });
+  const all = await db.getAll(store);
+  const remote = remoteItems.map((r) => migrateRecord({ ...r, kind }));
+  const remoteIds = new Set(remote.map((r) => r.id));
+  const inScope = (r) => scopeOf(r) === (scope || null);
+  const local = all.filter((r) => inScope(r) || remoteIds.has(r.id));
+  const res = mergeCollection({ local, localTombs: await getTombstones(kind, scope), remote, remoteTombs: remoteTombs || {} });
+  const outScope = new Set(all.filter((r) => !inScope(r)).map((r) => r.id));
+  res.deletes = res.deletes.filter((id) => !outScope.has(id));
+  for (const u of res.upserts) { if (scope) u.groupId = scope; else if (scopeOf(u)) delete u.groupId; }
   if (res.upserts.length) await db.putMany(store, res.upserts);
   if (res.deletes.length) await db.deleteMany(store, res.deletes);
-  await setTombstones(kind, res.tombs);
-  // un elemento aperto sullo schermo (es. un esercizio) viene avvisato
+  await setTombstones(kind, res.tombs, scope);
+  // un elemento aperto sullo schermo viene avvisato (la pagina non perde quello che si sta scrivendo)
   for (const u of res.upserts) emit('remote-update', { kind, id: u.id, rec: u, collection: true });
   for (const id of res.deletes) emit('removed', { kind, id, remote: true });
   if (res.upserts.length || res.deletes.length) emit('imported', { kind, upserts: res.upserts.length, deletes: res.deletes.length });
@@ -174,6 +246,7 @@ export async function countExamples() {
 export async function wipeAll() {
   for (const s of [...Object.values(STORE_OF_KIND), 'sync']) await db.clear(s);
   await setSetting('tombstones', {});
+  await setSetting('gtombs', {});
   const meta = await getSetting('meta', {});
   await setSetting('meta', { ...meta, seeded: true });
 }

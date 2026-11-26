@@ -6,8 +6,9 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES, MODULE_ORDER, sanitizeModules } from '../model.js';
 import { pageHeader } from './common.js';
+import { groupsCard } from './groups.js';
 
-export const APP_VERSION = '1.5.1';
+export const APP_VERSION = '1.6.1';
 
 const folderUrl = (f) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(f.folderId);
 
@@ -47,10 +48,21 @@ export async function settingsView(root) {
     body.append(sections, help);
     const [drive, adv] = await Promise.all([driveCard(render), advancedSection(render)]);
     if (!sections.isConnected) return; // pagina già ridisegnata
+    const groups = groupsCard(render);
+    if (groups) body.prepend(groups);
     body.prepend(drive);
     body.append(adv);
   };
   await render();
+  // gruppi cambiati (entrata, uscita, non si fa più parte): si aggiorna solo la scheda "Gruppi"
+  const onGroups = () => {
+    const old = body.querySelector('#gruppi');
+    if (!old || !body.isConnected) return;
+    const fresh = groupsCard(render);
+    if (fresh) old.replaceWith(fresh);
+  };
+  repo.bus.addEventListener('groups', onGroups);
+  return () => repo.bus.removeEventListener('groups', onGroups);
 }
 
 async function driveCard(rerender) {

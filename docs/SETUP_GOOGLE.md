@@ -9,21 +9,24 @@ Gli allenatori non configurano nulla: toccano **Collega Google Drive** e l'app c
 | Voce | Valore |
 |---|---|
 | Progetto Google Cloud | `rugby-coach-515808` |
-| API abilitate | Google Drive API |
+| API abilitate | Google Drive API, Google Picker API |
 | Google Auth Platform | pubblico **Esterno**, stato **In produzione** (scope solo `drive.file`, non sensibile) |
 | Informativa privacy | <https://leobordo.github.io/rugby-coach/privacy.html> (`app/privacy.html`) |
 | Client OAuth (Applicazione web) | `613972924268-728rj0ug6s50d6a5ursccrs16ug6fa6b.apps.googleusercontent.com` |
 | Origini JavaScript autorizzate | `https://leobordo.github.io`, `http://localhost:8080` |
-| Chiave API / App ID (Picker) | non usati |
+| Chiave API (Picker) | `AIzaSyBG2Gl2wgmzDl6eoExWeg87Y_ahnDkmPRE` — da limitare (vedi sotto) |
+| App ID (numero del progetto) | `613972924268` |
 
-Il Client ID è già in `app/config.js`. Le sezioni seguenti servono per rifare la configurazione da zero
+Client ID, chiave API e App ID sono già in `app/config.js` (nessuno dei tre è un segreto).
+La chiave API e l'App ID servono **solo** per entrare in un gruppo (Google Picker) e per l'opzione avanzata
+"usa un'altra cartella"; il collegamento personale resta di un tocco, senza Picker. Le sezioni seguenti servono per rifare la configurazione da zero
 (es. un nuovo progetto o un fork pubblicato su un altro dominio).
 
 ## 1. Progetto e API
 
 1. <https://console.cloud.google.com/> → selettore progetti → **Nuovo progetto** (es. `Rugby Coach`).
 2. **API e servizi → Libreria** → **Google Drive API** → **Abilita**.
-   (Google Picker API serve solo per l'opzione avanzata "usa un'altra cartella": non abilitarla se non serve.)
+3. **Google Picker API** → **Abilita** (serve per entrare nei gruppi di allenatori).
 
 ## 2. Google Auth Platform
 
@@ -68,12 +71,15 @@ Aumenta `VERSION` in `app/sw.js`, fai push su `main`: GitHub Actions esegue i te
 Per le prove si può sostituire il Client ID senza ripubblicare: **Impostazioni → Avanzate → Configurazione Google
 (sviluppatori)** (valore salvato solo su quel dispositivo).
 
-### Facoltativo: scelta di una cartella esistente (Google Picker)
+### Google Picker (gruppi di allenatori)
 
-Solo se si vuole offrire in **Avanzate** il pulsante "Usa un'altra cartella di Drive": abilita la Google Picker API,
-crea una **chiave API** limitata ai siti `https://leobordo.github.io/*`, `http://localhost:8080/*`,
-`https://docs.google.com/*` e alle API Picker e Drive, e aggiungi in `config.js` `apiKey` e `appId`
-(il **numero** del progetto, in *IAM e amministrazione → Impostazioni*).
+1. **API e servizi → Credenziali → Crea credenziali → Chiave API**.
+2. **Limitazioni**: *Referrer HTTP* `https://leobordo.github.io/*`, `http://localhost:8080/*`; *API*: Google Picker API
+   e Google Drive API.
+3. In `config.js`: `apiKey` = la chiave, `appId` = il **numero** del progetto (*IAM e amministrazione → Impostazioni*).
+   L'App ID deve essere quello del progetto del Client ID: con drive.file, i file scelti nel Picker diventano
+   accessibili a quell'app.
+4. Nessuno scope aggiuntivo: tutto resta `drive.file` (non sensibile).
 
 ## Come lavora l'app con Drive
 

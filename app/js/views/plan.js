@@ -5,7 +5,7 @@ import {
   CATEGORIES, BLOCK_TYPES, newBlock, templatePlanSession, newPlanSession, moveItem, removeItem, ordinalRoman,
   sessionFromPlanSession, findExerciseByName, deepClone, uid, sanitizeModules,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, finishButton, openPrepared } from './common.js';
+import { autosaver, pageHeader, docActions, finishButton, openPrepared, scopeBar } from './common.js';
 
 export async function planView(root, { id }) {
   const p = await repo.get('plan', id);
@@ -16,7 +16,7 @@ export async function planView(root, { id }) {
   const dlId = 'dl-ex-' + p.id;
   const body = h('div.sheet.portrait');
   root.append(pageHeader('Obiettivi / piano trimestrale', { sub: [p.title, p.category, p.season].filter(Boolean).join(' — '), back: '#/?t=piani',
-    actions: [saver.pill, ...docActions(p, saver)] }), body, finishButton(saver, { label: '✓ Fine', back: '#/?t=piani' }));
+    actions: [saver.pill, ...docActions(p, saver)] }), scopeBar(p, saver) || '', body, finishButton(saver, { label: '✓ Fine', back: '#/?t=piani' }));
 
   const rerender = () => { const y = window.scrollY; clear(body); render(); window.scrollTo(0, y); };
 

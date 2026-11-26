@@ -9,7 +9,7 @@ import {
   isBlankValue, planItemFromExercise, observationFromExercise, observationFromPlanItem, reviewRowLabel, formatDateIT,
   sessionCategories, ordinalRoman, toInt, SESSION_MODULES, MODULE_ORDER, moduleHasData, clearModule, isBlankObservation,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton } from './common.js';
+import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton, scopeBar } from './common.js';
 
 const MODULE_TITLES = {
   program: ['Programma della seduta', ''],
@@ -33,7 +33,7 @@ export async function sessionView(root, { id, tab = 'foglio' }) {
   const subtitle = () => [formatDateIT(s.date), sessionCategories(s).join(' · ')].filter(Boolean).join(' — ');
   const head = pageHeader('Allenamento', { sub: subtitle(), back: '#/', actions: [saver.pill, ...docActions(s, saver)] });
   const body = h('div.sheet.session-sheet');
-  root.append(head, body, finishButton(saver, { label: '✓ Fine allenamento' }));
+  root.append(head, scopeBar(s, saver) || '', body, finishButton(saver, { label: '✓ Fine allenamento' }));
 
   const rerender = () => {
     const y = window.scrollY;

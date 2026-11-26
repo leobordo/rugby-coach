@@ -145,6 +145,58 @@ export function createGoogleAuth({ getConfig, storage = window.localStorage, leg
     }
   }
 
+  // ----- Google Picker per ENTRARE IN UN GRUPPO: preparato in anticipo e aperto SUBITO nel tocco -----
+  let pickerReady = false;
+  let pickerLoading = null;
+  let pickerCfg = null;
+  function preloadPicker() {
+    if (pickerReady) return Promise.resolve(true);
+    if (!pickerLoading) {
+      pickerLoading = (async () => {
+        const cfg = await getConfig();
+        if (!cfg.apiKey || !cfg.appId) throw new GoogleSignInError('notConfigured');
+        await loadScript(GAPI_SRC);
+        await new Promise((resolve, reject) => window.gapi.load('picker', { callback: resolve, onerror: () => reject(new GoogleSignInError('unreachable')) }));
+        pickerCfg = cfg;
+        pickerReady = true;
+        return true;
+      })().catch((e) => { pickerLoading = null; throw e; });
+    }
+    return pickerLoading;
+  }
+  function pickerIsReady() { return pickerReady && !!getValidToken(); }
+
+  // Seleziona i file del gruppo (Picker filtrato su quegli id, selezione multipla, anche le cartelle).
+  // Sincrono fino a setVisible: va chiamato dentro il tocco. Risolve con gli id scelti, o null se si annulla.
+  function pickFilesNow(fileIds, { title = 'Seleziona tutti i file e tocca «Seleziona»' } = {}) {
+    const t = getValidToken();
+    if (!pickerReady || !t) { preloadPicker().catch(() => {}); return Promise.reject(new GoogleSignInError(t ? 'notReady' : 'failed')); }
+    const gp = window.google.picker;
+    return new Promise((resolve) => {
+      const view = new gp.DocsView(gp.ViewId.DOCS).setFileIds(fileIds.join(',')).setIncludeFolders(true).setSelectFolderEnabled(true).setMode(gp.DocsViewMode.LIST);
+      // nello schermo anche su telefono
+      const w = Math.max(300, Math.min(1051, window.innerWidth - 16));
+      const hgt = Math.max(360, Math.min(650, window.innerHeight - 24));
+      const picker = new gp.PickerBuilder()
+        .setTitle(title)
+        .addView(view)
+        .enableFeature(gp.Feature.MULTISELECT_ENABLED)
+        .enableFeature(gp.Feature.SUPPORT_DRIVES)
+        .setOAuthToken(t)
+        .setDeveloperKey(pickerCfg.apiKey)
+        .setAppId(String(pickerCfg.appId))
+        .setOrigin(window.location.protocol + '//' + window.location.host)
+        .setSize(w, hgt)
+        .setLocale('it')
+        .setCallback((data) => {
+          if (data.action === gp.Action.PICKED) resolve((data.docs || []).map((d) => d.id));
+          else if (data.action === gp.Action.CANCEL) resolve(null);
+        })
+        .build();
+      picker.setVisible(true);
+    });
+  }
+
   async function pickFolder() {
     const cfg = await getConfig();
     if (!cfg.apiKey || !cfg.appId) throw new Error('Per scegliere una cartella servono API key e App ID (numero progetto).');
@@ -176,5 +228,5 @@ export function createGoogleAuth({ getConfig, storage = window.localStorage, leg
     });
   }
 
-  return { getValidToken, clearToken, preload, isReady, reset, signIn, signOut, pickFolder, hasToken: () => !!getValidToken() };
+  return { getValidToken, clearToken, preload, isReady, reset, signIn, signOut, pickFolder, preloadPicker, pickerIsReady, pickFilesNow, hasToken: () => !!getValidToken() };
 }

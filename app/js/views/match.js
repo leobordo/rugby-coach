@@ -2,7 +2,7 @@
 import { h, clear, textInput, numberInput, textArea, rowControls, confirmDialog } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, MATCH_COLUMNS, newMatchRow, matchColumnTotals, moveItem, removeItem, formatDateIT, normalizeUnder, toInt } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, rosterNames, finishButton } from './common.js';
+import { autosaver, pageHeader, docActions, drawingCell, rosterNames, finishButton , scopeBar } from './common.js';
 
 export async function matchView(root, { id }) {
   const m = await repo.get('match', id);
@@ -13,7 +13,7 @@ export async function matchView(root, { id }) {
   root.append(pageHeader('Scheda della partita', {
     sub: [formatDateIT(m.date), m.opponent ? 'contro ' + m.opponent : '', m.under ? normalizeUnder(m.under) : ''].filter(Boolean).join(' — '),
     back: '#/', actions: [saver.pill, ...docActions(m, saver)],
-  }), body, finishButton(saver, { label: '✓ Fine partita', back: '#/?t=partite' }));
+  }), scopeBar(m, saver) || '', body, finishButton(saver, { label: '✓ Fine partita', back: '#/?t=partite' }));
 
   const rerender = async () => {
     const y = window.scrollY;

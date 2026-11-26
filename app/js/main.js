@@ -11,6 +11,7 @@ import { libraryView, exerciseView } from './views/library.js';
 import { rosterView } from './views/roster.js';
 import { settingsView, onboardingView } from './views/settings.js';
 import { docView } from './views/docs.js';
+import { groupView, joinView } from './views/groups.js';
 
 const routes = [
   [/^\/?$/, (r, m, q) => homeView(r, {}, q), 'home'],
@@ -25,6 +26,8 @@ const routes = [
   [/^\/benvenuto$/, (r) => onboardingView(r), 'benvenuto'],
   [/^\/guida$/, (r) => docView(r, 'info'), 'impostazioni'],
   [/^\/info$/, (r) => docView(r, 'info'), 'impostazioni'],
+  [/^\/gruppo\/([^/]+)$/, (r, m) => groupView(r, { id: decodeURIComponent(m[1]) }), 'impostazioni'],
+  [/^\/unisciti$/, (r, m, q) => joinView(r, {}, q), 'impostazioni'],
 ];
 
 const main = document.getElementById('view');
@@ -126,6 +129,12 @@ function header() {
   repo.bus.addEventListener('sync-state', (e) => { if (!pulledShown) updSync(e.detail); });
   // novità arrivate da un altro dispositivo: indicazione discreta per un paio di secondi
   let pulledShown = null;
+  repo.bus.addEventListener('group-lost', (e) => {
+    const d = e.detail || {};
+    toast(d.status === 'removed' ? `Non fai più parte del gruppo "${d.name}". Le tue schede personali restano.`
+      : d.status === 'deleted' ? `Il gruppo "${d.name}" è stato eliminato${d.admin ? ' da ' + d.admin : ''}. Puoi tenerne una copia personale (Impostazioni › Gruppi).`
+        : `Il gruppo "${d.name}" non si apre più.`, 'info', 8000);
+  });
   repo.bus.addEventListener('pulled', () => {
     clearTimeout(pulledShown);
     syncInd.textContent = 'Aggiornato da Drive ✓'; syncInd.className = 'sync-ind synced pulled';

@@ -4,7 +4,8 @@ import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKe
 import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder, findOrCreateDataFolder, moveRootJson, moveFileQuietly } from './drive.js';
 import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
-import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup, decideSheet, conflictCopy, sameRecordContent } from './model.js';
+import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup, decideSheet, conflictCopy, sameRecordContent, isGroupId, scopeOf } from './model.js';
+import { createGroupsCore, partOfKind, inviteLink as buildInviteLink, pickIds, GroupError, isAccessError, normEmail, GROUP_PARTS } from './groups.js';
 import { debounce } from './ui.js';
 
 export const DEFAULT_FOLDER_NAME = 'Rugby Coach';
@@ -67,6 +68,7 @@ export async function initSync() {
     getJsonFolderId: async () => (await repo.getSetting('drive', null))?.dataFolderId || null,
     listRemote: () => listPersonal(),
     beforeUpload,
+    targetFor,
     onChange: (e) => { if (e.status) statusMap.set(e.key, e.status); else statusMap.delete(e.key); repo.emit('sync-entry', e); },
   });
   for (const e of await syncStore.all()) statusMap.set(e.key, e.status);
@@ -74,8 +76,12 @@ export async function initSync() {
     onDirty: async (kind, id) => { await engine.markDirty(kind, id); schedule(); },
     onForget: (kind, id) => engine.forget(kind, id),
     // scheda eliminata: i suoi file su Drive vanno nel cestino (anche più tardi, se ora non c'è rete)
-    onDelete: async (kind, id) => { await engine.markDeleted(kind, id); await engine.markDirty('deleted', COLLECTION_ID); schedule(); },
+    onDelete: async (kind, id, gid) => { await engine.markDeleted(kind, id); if (!gid) await engine.markDirty('deleted', COLLECTION_ID); schedule(); },
+    // elemento di un gruppo modificato: il suo file del gruppo va inviato
+    onGroupDirty: (gid, kind) => markGroupDirty(gid, kind),
   });
+  repo.setIdentity(await repo.getSetting('me', null));
+  groupsCache = (await repo.getSetting('groups', [])) || [];
   await refreshState();
   await requeueMigrated();
   window.addEventListener('online', () => { runNow(); if (state.configured && state.folder) auth.preload(); });
@@ -117,7 +123,7 @@ async function sheetTombstones() {
   return out;
 }
 
-async function collectionRecord(kind) {
+async function collectionRecord(kind, id = COLLECTION_ID) {
   if (kind === 'deleted') {
     const tombstones = await sheetTombstones();
     const alive = await getRevived();
@@ -126,10 +132,11 @@ async function collectionRecord(kind) {
     return { kind, id: COLLECTION_ID, tombstones, alive, example: false, placeholder: none };
   }
   const dataKind = kind === 'library' ? 'exercise' : 'player';
-  const items = (await repo.list(dataKind)).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it'));
-  const tombstones = await repo.getTombstones(dataKind);
+  const gid = isGroupId(id) ? id : null; // libreria/rosa personali ('all') o di un gruppo
+  const items = (await repo.listScope(dataKind, gid)).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it'));
+  const tombstones = await repo.getTombstones(dataKind, gid);
   const noTombs = Object.keys(tombstones).length === 0;
-  const rec = { kind, id: COLLECTION_ID, tombstones,
+  const rec = { kind, id: gid || COLLECTION_ID, groupId: gid || undefined, tombstones,
     example: items.every((e) => e.example) && noTombs, // solo esempi non toccati: non sovrascrive mai Drive
     placeholder: items.length === 0 && noTombs };
   rec[kind === 'library' ? 'exercises' : 'players'] = items;
@@ -137,7 +144,7 @@ async function collectionRecord(kind) {
 }
 
 async function getRecord(kind, id) {
-  if (kind === 'library' || kind === 'roster' || kind === 'deleted') return collectionRecord(kind);
+  if (kind === 'library' || kind === 'roster' || kind === 'deleted') return collectionRecord(kind, id);
   return repo.get(kind, id);
 }
 
@@ -162,7 +169,7 @@ async function mergeDeletedJson(txt, { fromUpload = false } = {}) {
     const local = await repo.getTombstones(k);
     const all = { ...local, ...(remote[k] || {}) };
     const updated = {};
-    for (const id of Object.keys(all)) { const rec = await repo.get(k, id); if (rec) updated[id] = rec.updatedAt || EPOCH; }
+    for (const id of Object.keys(all)) { const rec = await repo.get(k, id); if (rec && !scopeOf(rec)) updated[id] = rec.updatedAt || EPOCH; }
     const res = resolveDeletions({ localTombs: local, remoteTombs: remote[k] || {}, localAlive: revived[k] || {}, remoteAlive: remoteAlive[k] || {},
       updatedOf: (id) => (id in updated ? updated[id] : null) });
     for (const id of res.remove) { await repo.removeLocalOnly(k, id); changed = true; }
@@ -212,7 +219,7 @@ async function buildFor(kind, rec, ctx = {}) {
   // (altro dispositivo), si ripete. Resta una piccola finestra tra il controllo e il PATCH: Drive v3 non offre
   // aggiornamenti condizionati (If-Match) sugli upload; l'elemento perso riappare comunque al giro successivo
   // del dispositivo che lo possiede, perché il suo merge lo rimanda.
-  const remoteId = (kind === 'library' || kind === 'roster' || kind === 'deleted') && ((ctx.known && ctx.known.json) || (ctx.remote && ctx.remote.json));
+  const remoteId = (kind === 'library' || kind === 'roster' || kind === 'deleted') && !isGroupId(rec.id) && ((ctx.known && ctx.known.json) || (ctx.remote && ctx.remote.json));
   if (kind === 'deleted') {
     if (remoteId) {
       try { await mergeDeletedJson(await drive.download(remoteId), { fromUpload: true }); } catch (e) { if (e instanceof DriveAuthError || e instanceof DriveOfflineError) throw e; console.warn(e); }
@@ -269,7 +276,7 @@ async function runOnce({ force = false, timer = false } = {}) {
     return null;
   }
   // dal timer: niente chiamate se non c'è nulla da inviare e il controllo è stato fatto da poco
-  if (timer && !force && Date.now() - lastPull < pullEveryMs() && !(await engine.pending()).length) return null;
+  if (timer && !force && Date.now() - lastPull < pullEveryMs() && !(await engine.pending()).length && !(await anyGroupDirty())) return null;
   state.running = true; repo.emit('sync-state', { ...state });
   try {
     // "File per l'app" (ritrovata o creata) e spostamento dei vecchi .json dalla cartella principale
@@ -293,6 +300,14 @@ async function runOnce({ force = false, timer = false } = {}) {
         if (waiting) return null; // senza aver ricevuto non si rischia di sovrascrivere: riprova tra poco
       }
     } else if (waiting) return null;
+    // gruppi: si ricevono le modifiche degli altri allenatori e si inviano le proprie (prima dei documenti Word,
+    // così quelli scritti da questo allenatore riflettono anche le modifiche ricevute)
+    if (activeGroups().length) {
+      try { await runGroups(); } catch (e) {
+        console.warn('Gruppi', e);
+        if (e instanceof DriveAuthError) { state.needsAuth = true; state.needsAuthFor = 'update'; return null; }
+      }
+    }
     const sum = await engine.processQueue({ force });
     state.needsAuth = !!sum.needsAuth;
     if (sum.needsAuth) state.needsAuthFor = 'save';
@@ -346,6 +361,7 @@ export async function signIn(opts = {}) {
   try {
     const a = await drive.about();
     state.account = a.user ? (a.user.emailAddress || a.user.displayName) : null;
+    if (a.user && a.user.emailAddress) await setMe(a.user);
     const f = await repo.getSetting('drive', null);
     if (f) await repo.setSetting('drive', { ...f, account: state.account });
   } catch { /* facoltativo */ }
@@ -445,6 +461,7 @@ export async function markAllDirty() {
   await engine.markDirty('library', COLLECTION_ID);
   await engine.markDirty('roster', COLLECTION_ID);
   await engine.markDirty('deleted', COLLECTION_ID);
+  for (const g of activeGroups()) if (g.role === 'admin') await engine.markDirty('library', g.id);
   schedule();
 }
 
@@ -714,4 +731,274 @@ async function beforeUpload(entry, record, files) {
   const rec = await repo.get(entry.kind, entry.id);
   if (!rec || (cur && cur.status === SYNC_STATUS.SYNCED)) return { skip: true };
   return { record: rec, jsonVersion: cur && cur.jsonVersion };
+}
+
+// =====================================================================================================
+// Gruppi di allenatori (vedi groups.js): stessa ricezione automatica (versione Drive dei file del gruppo,
+// unione per elemento, scheda aperta protetta, copie di conflitto)
+// =====================================================================================================
+let groupsCache = [];            // copia in memoria (lettura sincrona: interfaccia e targetFor)
+let groupRunning = null;
+
+export function groupsNow() { return groupsCache.map((g) => ({ ...g })); }
+export function activeGroups() { return groupsCache.filter((g) => g.status === 'ok'); }
+export function groupById(gid) { return groupsCache.find((g) => g.id === gid) || null; }
+export function getMe() { return repo.getIdentity(); }
+
+async function setMe(user) {
+  const me = { email: normEmail(user.emailAddress), name: String(user.displayName || '').slice(0, 80) };
+  const cur = await repo.getSetting('me', null);
+  if (!cur || cur.email !== me.email || cur.name !== me.name) await repo.setSetting('me', me);
+  repo.setIdentity(me);
+  return me;
+}
+async function ensureMe() {
+  const cur = repo.getIdentity();
+  if (cur && cur.email) return cur;
+  const a = await drive.about();
+  if (!a || !a.user || !a.user.emailAddress) throw new Error('Non riesco a leggere il tuo account Google.');
+  return setMe(a.user);
+}
+
+async function saveGroups(list) {
+  groupsCache = list;
+  await repo.setSetting('groups', list);
+  repo.emit('groups', groupsNow());
+}
+async function putGroup(g) {
+  const list = groupsCache.filter((x) => x.id !== g.id);
+  list.push(g);
+  list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'it'));
+  await saveGroups(list);
+}
+
+async function markGroupDirty(gid, kind) {
+  const part = partOfKind(kind);
+  if (!part || !groupById(gid)) return;
+  const all = (await repo.getSetting('gdirty', {})) || {};
+  const g = { ...(all[gid] || {}) };
+  g[part] = (g[part] || 0) + 1;
+  await repo.setSetting('gdirty', { ...all, [gid]: g });
+  repo.emit('group-dirty', { gid, part });
+  schedule();
+}
+async function anyGroupDirty() {
+  const all = (await repo.getSetting('gdirty', {})) || {};
+  return Object.entries(all).some(([gid, p]) => groupById(gid) && Object.values(p || {}).some(Boolean));
+}
+// Stato di un elemento del gruppo, in parole semplici
+export async function groupStatusLabel(gid, kind) {
+  const g = groupById(gid);
+  if (!g || g.status !== 'ok') return { text: 'Gruppo non disponibile', cls: 'error', title: '' };
+  const all = (await repo.getSetting('gdirty', {})) || {};
+  const pending = !!((all[gid] || {})[partOfKind(kind)]);
+  return pending ? { text: 'Da inviare al gruppo', cls: 'pending', title: navigator.onLine ? 'Tra pochi secondi' : 'Senza rete: si invia quando torna la connessione' }
+    : { text: 'Nel gruppo ✓', cls: 'synced', title: 'Gli altri allenatori del gruppo la vedono' };
+}
+
+// versione di ogni elemento vista per l'ultima volta nei file del gruppo (per riconoscere i conflitti)
+async function groupBase(gid) { return { ...((((await repo.getSetting('gbase', {})) || {})[gid]) || {}) }; }
+async function setGroupBase(gid, upd) {
+  const all = (await repo.getSetting('gbase', {})) || {};
+  await repo.setSetting('gbase', { ...all, [gid]: { ...(all[gid] || {}), ...upd } });
+}
+
+const groupLocal = {
+  async items(gid, kinds) { const out = []; for (const k of kinds) out.push(...await repo.listScope(k, gid)); return out; },
+  tombs: (gid) => repo.getGroupTombstones(gid),
+  log: (gid) => repo.getGroupDeletedLog(gid),
+  setLog: (gid, log) => repo.setGroupDeletedLog(gid, log),
+  async merge(gid, kinds, items, tombs) {
+    const res = { upserts: [], deletes: [], remoteChanged: false };
+    const base = await groupBase(gid);
+    const baseUpd = {};
+    for (const k of kinds) {
+      const remote = items.filter((x) => x.kind === k);
+      // stessa scheda cambiata qui e da un altro allenatore dopo l'ultima versione comune: la più recente vince,
+      // l'altra resta nel gruppo come copia "(conflitto del …)" (schede aperte: unisce la pagina, campo per campo)
+      if (SHEET_KINDS.includes(k)) {
+        for (const R of remote) {
+          const L = await repo.get(k, R.id);
+          const b = Date.parse(base[R.id] || 0) || 0;
+          if (!L || scopeOf(L) !== gid || repo.isOpen(k, R.id) || !b) continue;
+          const tL = Date.parse(L.updatedAt) || 0; const tR = Date.parse(R.updatedAt) || 0;
+          if (tL > b && tR > b && !sameRecordContent(L, R)) {
+            const loser = tR > tL ? L : { ...R, groupId: gid };
+            await repo.save({ ...conflictCopy(loser), groupId: gid }, { touch: false });
+          }
+        }
+      }
+      const r = await repo.mergeRemoteCollection(k, remote, (tombs || {})[k] || {}, { scope: gid });
+      res.upserts.push(...r.upserts); res.deletes.push(...r.deletes.map((id) => ({ kind: k, id })));
+      res.remoteChanged = res.remoteChanged || r.remoteChanged;
+      for (const x of r.items) baseUpd[x.id] = x.updatedAt;
+    }
+    await setGroupBase(gid, baseUpd);
+    return res;
+  },
+  async uploaded(gid, items) { const upd = {}; for (const x of items) upd[x.id] = x.updatedAt; await setGroupBase(gid, upd); },
+  async dirtyRev(gid, part) { return ((((await repo.getSetting('gdirty', {})) || {})[gid]) || {})[part] || 0; },
+  async clearDirty(gid, part, rev) {
+    const all = (await repo.getSetting('gdirty', {})) || {};
+    const g = { ...(all[gid] || {}) };
+    if (g[part] === rev) { delete g[part]; await repo.setSetting('gdirty', { ...all, [gid]: g }); repo.emit('group-dirty', { gid, part }); }
+  },
+};
+let core = null;
+function groupsCore() {
+  if (!core) core = createGroupsCore({ drive, local: groupLocal, me: ensureMe });
+  return core;
+}
+
+// dove vanno i documenti Word di una scheda (vedi createSyncEngine)
+async function targetFor(entry, record, folderId) {
+  const isColl = entry.kind === 'library' || entry.kind === 'roster' || entry.kind === 'deleted';
+  const gid = isColl ? (isGroupId(entry.id) ? entry.id : null) : scopeOf(record);
+  if (!gid) return { folderId, docx: true, json: true };
+  const g = groupById(gid);
+  if (!g || g.status !== 'ok') return { skip: true };
+  const me = repo.getIdentity();
+  // con drive.file solo chi ha creato un documento lo può aggiornare: il Word di una scheda del gruppo lo scrive
+  // chi l'ha creata (anche quando la modifica un collega: lo rigenera quando riceve), la libreria l'amministratore
+  const mine = isColl ? g.role === 'admin' : !!(me && record.createdBy && normEmail(record.createdBy.email) === me.email);
+  return { folderId: g.folderId, docx: mine && g.canWriteFolder !== false, json: false, keepOthers: !mine };
+}
+
+// Un giro su tutti i gruppi. Le modifiche ricevute aggiornano anche i documenti di cui questo allenatore è
+// autore e mandano nel cestino quelli degli elementi eliminati.
+async function runGroups() {
+  if (groupRunning) return groupRunning;
+  groupRunning = (async () => {
+    const me = await ensureMe();
+    let changed = 0;
+    for (const g0 of activeGroups()) {
+      const g = JSON.parse(JSON.stringify(g0));
+      const res = await groupsCore().syncGroup(g);
+      g.status = res.status;
+      g.lastSync = Date.now();
+      if (g.status === 'ok') g.role = normEmail(g.manifest && g.manifest.createdBy && g.manifest.createdBy.email) === me.email ? 'admin' : 'member';
+      await putGroup(g);
+      const ch = res.changes;
+      for (const u of ch.upserts) {
+        if (SYNCABLE_KINDS.includes(u.kind) && u.createdBy && normEmail(u.createdBy.email) === me.email) await engine.markDirty(u.kind, u.id);
+      }
+      for (const d of ch.deletes) if (SYNCABLE_KINDS.includes(d.kind) && (await engine.getStatus(d.kind, d.id))) await engine.markDeleted(d.kind, d.id);
+      if (g.role === 'admin' && [...ch.upserts, ...ch.deletes].some((x) => x.kind === 'exercise')) await engine.markDirty('library', g.id);
+      changed += ch.upserts.length + ch.deletes.length;
+      if (g0.status === 'ok' && g.status !== 'ok') repo.emit('group-lost', { gid: g.id, name: g.name, status: g.status, admin: (g.manifest && g.manifest.createdBy && (g.manifest.createdBy.name || g.manifest.createdBy.email)) || '' });
+    }
+    if (changed) repo.emit('pulled', { changes: changed });
+  })().finally(() => { groupRunning = null; });
+  return groupRunning;
+}
+
+export function inviteLinkFor(g) { return buildInviteLink(location.origin + location.pathname, g); }
+
+// ----- creare un gruppo (da un gesto: l'accesso a Google parte subito) -----
+export async function createGroup({ name, category }) {
+  if (!String(name || '').trim()) throw new Error('Scrivi il nome del gruppo.');
+  const tok = auth.getValidToken() ? null : signIn();
+  if (tok) await tok;
+  if (!state.folder) await connectDrive();
+  await ensureMe();
+  const g = await groupsCore().createGroup({ name, category });
+  await putGroup(g);
+  return g;
+}
+
+// ----- entrare in un gruppo -----
+export function preparePicker() { return auth && navigator.onLine ? auth.preloadPicker() : Promise.resolve(false); }
+export function pickerReady() { return !!(auth && auth.pickerIsReady()); }
+export function groupForInvite(inv) { return groupsCache.find((g) => g.manifestId === inv.manifestId && g.status === 'ok') || null; }
+
+// IMPORTANTE: chiamata in modo sincrono dal tocco (il Picker si apre subito, come l'accesso a Google)
+export function joinGroupNow(inv) {
+  const picked = auth.pickFilesNow(pickIds(inv));
+  return (async () => {
+    const ids = await picked;
+    if (!ids) return { cancelled: true };
+    const need = [inv.manifestId, ...inv.fileIds];
+    if (!need.every((id) => ids.includes(id))) throw new GroupError('missingFiles');
+    await ensureMe();
+    const g = await groupsCore().joinGroup(inv);
+    g.status = 'ok';
+    await putGroup(g);
+    await runGroups();
+    runNow({ force: true });
+    return { group: g };
+  })();
+}
+
+async function withGroup(gid, fn) {
+  const g0 = groupById(gid);
+  if (!g0) throw new Error('Gruppo non trovato.');
+  const tok = auth.getValidToken() ? null : signIn();
+  if (tok) await tok;
+  const g = JSON.parse(JSON.stringify(g0));
+  await fn(g);
+  await putGroup(g);
+  return g;
+}
+export const closeInvites = (gid) => withGroup(gid, (g) => groupsCore().closeInvites(g));
+export const reopenInvites = (gid) => withGroup(gid, (g) => groupsCore().reopenInvites(g));
+export async function removeMember(gid, email) {
+  let res = null;
+  await withGroup(gid, async (g) => { res = await groupsCore().removeMember(g, email); });
+  return res;
+}
+// Gruppo eliminato dall'amministratore (o non più apribile): si tengono gli elementi come personali
+export async function keepGroupCopy(gid) {
+  let n = 0;
+  for (const kinds of Object.values(GROUP_PARTS)) for (const k of kinds) for (const r of await repo.listScope(k, gid)) {
+    delete r.groupId; delete r.createdBy; delete r.updatedBy;
+    await repo.save(r); n++;
+  }
+  await forgetGroupLocally(gid);
+  return n;
+}
+export const inviteByEmail = (gid, email) => withGroup(gid, (g) => groupsCore().addByEmail(g, email));
+export async function refreshGroupsNow() {
+  const tok = auth.getValidToken() ? null : signIn();
+  if (tok) await tok;
+  await runGroups();
+  return runNow({ force: true });
+}
+
+// Esce dal gruppo: il proprio nome viene tolto; gli elementi del gruppo spariscono da questo dispositivo
+// (restano agli altri allenatori e su Drive). I dati personali non cambiano.
+export async function leaveGroup(gid) {
+  const g = groupById(gid);
+  if (!g) return;
+  const tok = g.status === 'ok' && !auth.getValidToken() ? signIn() : null;
+  if (tok) await tok;
+  if (g.status === 'ok') await groupsCore().leaveGroup(JSON.parse(JSON.stringify(g)));
+  await forgetGroupLocally(gid);
+}
+export async function forgetGroupLocally(gid) {
+  for (const kinds of Object.values(GROUP_PARTS)) for (const k of kinds) for (const r of await repo.listScope(k, gid)) await repo.removeLocalOnly(k, r.id);
+  await engine.forget('library', gid);
+  for (const key of ['gtombs', 'gdirty', 'gbase', 'gdellog']) { const v = (await repo.getSetting(key, {})) || {}; delete v[gid]; await repo.setSetting(key, v); }
+  const prefs = (await repo.getSetting('prefs', {})) || {};
+  if (prefs.scope === gid) { const { scope, ...rest } = prefs; await repo.setSetting('prefs', rest); }
+  await saveGroups(groupsCache.filter((x) => x.id !== gid));
+  repo.emit('imported', {});
+}
+
+// Sposta un elemento tra Personale e un gruppo
+export async function moveRecord(kind, id, gid) {
+  if (gid && !(repo.getIdentity() && repo.getIdentity().email) && auth.getValidToken()) await ensureMe();
+  return repo.moveTo(kind, id, gid);
+}
+
+export function groupErrorMessage(e, adminName) {
+  const who = adminName ? adminName : 'chi ha creato il gruppo';
+  if (e instanceof GroupError) {
+    if (e.code === 'noAccess') return `Non riesco ad aprire il gruppo: gli inviti sono chiusi o il link non è più valido. Chiedi a ${who} di invitarti con la tua email Gmail, poi riapri il link.`;
+    if (e.code === 'missingFiles') return `Servono tutti i file del gruppo: riapri la finestra di Google, selezionali tutti e tocca «Seleziona». Se non li vedi, chiedi a ${who} di invitarti con la tua email Gmail.`;
+    if (e.code === 'notGroup') return 'Questo link non è un invito valido a un gruppo di Rugby Coach.';
+    if (e.code === 'removedMember') return `Sei stato tolto da questo gruppo: per rientrare chiedi a ${who} di invitarti di nuovo con la tua email Gmail.`;
+    return e.message;
+  }
+  if (isAccessError(e)) return groupErrorMessage(new GroupError('noAccess'), adminName);
+  return friendlyError(e);
 }

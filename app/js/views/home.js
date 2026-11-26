@@ -5,7 +5,7 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { CATEGORIES, sanitizeModules, newSession, newMatch, newPlan, duplicateRecord, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
 import { banners } from './banners.js';
-import { moreMenu, confirmDelete, openPrepared } from './common.js';
+import { moreMenu, confirmDelete, openPrepared, scopeFilter, matchScope, newScopeFrom, groupBadge } from './common.js';
 
 const TABS = {
   sedute: { kind: 'session', label: 'Allenamenti', newLabel: '+ Nuovo allenamento' },
@@ -31,6 +31,10 @@ export async function homeView(root, params, query) {
   const tab = TABS[query.get('t')] ? query.get('t') : 'sedute';
   const conf = TABS[tab];
   const filters = { cat: query.get('cat') || '', sort: query.get('sort') || 'desc', q: '' };
+  // filtro rapido per gruppo (ricordato); "?gruppo=<id>" arriva dall'ingresso in un gruppo
+  const prefs0 = (await repo.getSetting('prefs', {})) || {};
+  filters.scope = query.get('gruppo') || prefs0.scopeFilter || 'all';
+  if (filters.scope !== 'all' && filters.scope !== 'personal' && !sync.groupById(filters.scope)) filters.scope = 'all';
 
   root.append(await banners());
   root.append(h('nav.tabs.home-tabs', { 'aria-label': 'Archivio' },
@@ -44,6 +48,10 @@ export async function homeView(root, params, query) {
   const dateFilters = conf.kind === 'plan' ? null : h('span.date-range', h('span', 'dal'), from, h('span', 'al'), to);
   for (const el of [from, to]) el.addEventListener('change', () => { filters.from = from.value; filters.to = to.value; renderList(); });
   const listEl = h('div.rec-list');
+  const scopeBox = h('div.scope-box');
+  const drawScope = () => { clear(scopeBox); const f = scopeFilter(filters.scope, async (v) => { filters.scope = v; const p = (await repo.getSetting('prefs', {})) || {}; await repo.setSetting('prefs', { ...p, scopeFilter: v }); drawScope(); renderList(); }); if (f) scopeBox.append(f); };
+  drawScope();
+  root.append(scopeBox);
   root.append(h('div.list-toolbar.home-toolbar',
     h('button.btn.primary.big.new-btn', { type: 'button', on: { click: create } }, conf.newLabel),
     h('details.filters-box', h('summary.btn', { role: 'button' }, '🔍 Cerca'), h('div.filters', search, catSel, dateFilters, sortSel))), listEl);
@@ -59,6 +67,8 @@ export async function homeView(root, params, query) {
       rec.title = `${ordinalRoman((existing.length % 4) + 1)} TRIMESTRE`;
       rec.term = (existing.length % 4) + 1;
     }
+    const gid = newScopeFrom(filters.scope); // dall'elenco di un gruppo: la scheda nasce nel gruppo
+    if (gid) rec.groupId = gid;
     await repo.save(rec);
     await openPrepared(openHref(rec));
   }
@@ -69,7 +79,9 @@ export async function homeView(root, params, query) {
     const all = await repo.list(conf.kind);
     const entries = new Map((await sync.allEntries()).map((e) => [e.key, e]));
     if (my !== renderToken) return; // è già partito un aggiornamento più recente dell'elenco
-    let items = all.filter((r) => !filters.cat || recCats(r).includes(filters.cat));
+    const gdirty = (await repo.getSetting('gdirty', {})) || {};
+    if (my !== renderToken) return;
+    let items = all.filter((r) => matchScope(r, filters.scope) && (!filters.cat || recCats(r).includes(filters.cat)));
     if (filters.from) items = items.filter((r) => (r.date || '') >= filters.from);
     if (filters.to) items = items.filter((r) => (r.date || '') <= filters.to);
     if (filters.q) items = items.filter((r) => JSON.stringify([r.title, r.opponent, r.location, r.date, (r.planItems || []).map((p) => p.name)]).toLowerCase().includes(filters.q));
@@ -84,7 +96,10 @@ export async function homeView(root, params, query) {
       return;
     }
     for (const r of items) {
-      const lab = sync.statusLabel(entries.get(`${r.kind}:${r.id}`));
+      const gpart = r.kind === 'plan' ? 'plans' : 'sheets';
+      const lab = r.groupId && sync.groupById(r.groupId)
+        ? (((gdirty[r.groupId] || {})[gpart]) ? { text: 'Da inviare al gruppo', cls: 'pending', title: '' } : { text: 'Nel gruppo ✓', cls: 'synced', title: '' })
+        : sync.statusLabel(entries.get(`${r.kind}:${r.id}`));
       let title, meta;
       if (r.kind === 'session') {
         title = formatDateIT(r.date) || 'Senza data';
@@ -102,7 +117,7 @@ export async function homeView(root, params, query) {
         h('a.rec-main', { href: openHref(r), on: { click: () => { sync.renewInGesture(); } } },
           h('strong.rec-title', title),
           h('span.rec-meta', meta || ' '),
-          h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
+          h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, groupBadge(r), h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
         moreMenu([
           h('button.btn', { type: 'button', on: { click: async () => { const d = duplicateRecord(r); if (d.kind === 'session' || d.kind === 'match') d.date = r.date; await repo.save(d); toast('Copia creata.', 'ok'); renderList(); } } }, '⧉ Duplica'),
           h('button.btn.danger', { type: 'button', on: { click: async () => {
@@ -113,8 +128,24 @@ export async function homeView(root, params, query) {
     }
   }
   await renderList();
-  const onEntry = () => { if (listEl.isConnected) renderList(); else { repo.bus.removeEventListener('sync-state', onEntry); repo.bus.removeEventListener('imported', onEntry); } };
+  // aggiornamento dell'elenco (novità ricevute, stato di salvataggio): mai mentre un menu ⋯ o una finestra è
+  // aperta, si rimanda alla chiusura
+  let deferred = false;
+  const busyUI = () => !!(listEl.querySelector('details[open]') || document.querySelector('dialog[open]'));
+  const onEntry = () => {
+    if (!listEl.isConnected) { off(); return; }
+    if (busyUI()) { deferred = true; return; }
+    renderList();
+  };
+  const onClose = () => { if (deferred && listEl.isConnected && !busyUI()) { deferred = false; renderList(); } };
+  const onCloseLater = () => setTimeout(onClose, 0);
   repo.bus.addEventListener('sync-state', onEntry);
   repo.bus.addEventListener('imported', onEntry);
-  return () => { repo.bus.removeEventListener('sync-state', onEntry); repo.bus.removeEventListener('imported', onEntry); };
+  listEl.addEventListener('toggle', onCloseLater, true);
+  document.addEventListener('close', onCloseLater, true);
+  function off() {
+    repo.bus.removeEventListener('sync-state', onEntry); repo.bus.removeEventListener('imported', onEntry);
+    listEl.removeEventListener('toggle', onCloseLater, true); document.removeEventListener('close', onCloseLater, true);
+  }
+  return off;
 }
