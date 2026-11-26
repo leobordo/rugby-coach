@@ -1,65 +1,73 @@
 # Rugby Coach
 
-Web app installabile (PWA) per allenatori di minirugby e rugby giovanile. Riproduce le schede cartacee di allenamento e partita, permette di disegnare gli esercizi su una Tactic Board e salva tutto sul proprio Google Drive come documenti Word.
+A just-for-fun side project I built to help me coach youth and mini rugby. It turns my paper training and match sheets into an installable web app (PWA), lets me draw drills on a tactic board, and saves everything to Google Drive as Word documents.
 
-**App:** <https://leobordo.github.io/rugby-coach/>
+**Try it:** <https://leobordo.github.io/rugby-coach/> (the interface is in Italian)
 
-## Funzionalità
+## Features
 
-- **Schede compilabili**: foglio allenamento (programma, bilancio, errori e cause, autovalutazione, preparatore atletico), scheda di osservazione, scheda della partita con contatori +/−, piano trimestrale da cui generare le sedute.
-- **Tactic Board**: campo intero, metà campo o griglia; pedine di due squadre, palla, coni, paletti, scudi, frecce di corsa, passaggio e calcio, mano libera e testo; annulla/ripeti, ridimensiona e ruota.
-- **Libreria esercizi** riutilizzabile e **rosa** per categoria.
-- **Offline e persistente**: dati in IndexedDB sul dispositivo, service worker per l'uso a bordo campo senza rete.
-- **Google Drive in un tocco**: "Collega Google Drive" → accesso Google → la cartella **Rugby Coach** viene ritrovata o creata da sola. Ogni scheda diventa un `.docx` fedele all'originale più un `.json` di backup, salvati in automatico; i file vengono aggiornati, mai duplicati, anche cambiando telefono (recupero automatico). Accesso limitato ai soli file creati dall'app (scope `drive.file`).
-- **Condividi**: ogni scheda (e la libreria esercizi) si manda come documento Word a WhatsApp, Mail, Drive o File, anche senza Drive collegato.
-- **Pensata per il telefono** e per allenatori non informatici: pulsanti grandi, linguaggio semplice, opzioni tecniche nascoste in Impostazioni → Avanzate.
+- **Training sessions built from modules**: every session starts with the *Programme* (the list of drills), and you add only the sections you need: attendance by age group, drill observations, session review, errors and causes, self-assessment, strength & conditioning. Sections can be removed and reordered.
+- **Match sheets** with large +/− counters for tackles, passes, support and more, and **term plans** that generate pre-filled sessions.
+- **Tactic board**: full pitch, half pitch or custom grid; players for two teams, ball, cones, poles, shields; run, pass and kick arrows; freehand and text; undo/redo, resize and rotate. Works with touch, mouse and pen.
+- **Drill library and squad list** by age group, reusable across sessions.
+- **Offline first**: data lives on the device (IndexedDB) and a service worker keeps the app working pitch-side without a connection.
+- **Google Drive in one tap**: sign in once and a *Rugby Coach* folder is created (or found again). Each sheet is saved as a `.docx` that mirrors the paper original, and app data is kept in a separate *File per l'app* subfolder. Files are updated in place and never duplicated.
+- **Multi-device sync**: changes made on another phone or computer arrive automatically. Concurrent edits are merged per item, an open sheet is never overwritten, and conflicting versions are kept as copies instead of being lost. Deletions go to the Drive trash and propagate to every device.
+- **Coach groups**: create a group (e.g. "U12 squad"), invite other coaches with a link, and share drills, plans, sessions, matches and the squad list. Invites can be closed, members removed, and changes from other coaches show up with their name.
+- **Share** any sheet or the drill library as a Word document through the phone's share sheet (WhatsApp, email, Drive…), even without Drive connected.
+- **Designed for phones and for non-technical coaches**: big buttons, plain language, advanced options tucked away. It also adapts to tablets and desktops.
 
-Senza Client ID configurato l'app funziona solo sul telefono (condivisione compresa).
+## Technical notes
 
-## Struttura del repository
+- No build step and no backend: static HTML, CSS and ES modules served by GitHub Pages. Runtime libraries (such as [`docx`](https://github.com/dolanmiu/docx)) are vendored, so nothing is loaded from a CDN.
+- Google access uses only the `drive.file` scope, so the app can only see the files it created or the user explicitly picked, and it needs no Google security assessment.
+- Sync merges data per item using timestamps and tombstones, checks Drive file versions before each upload, and treats "most recent event wins" consistently for edits versus deletions.
+- Groups work within the `drive.file` limits: each group keeps a fixed set of shared data files, and joining coaches select them once with Google Picker.
+- Tests: unit tests (`node --test`) plus end-to-end tests in a real browser (Playwright) against a fake Google Drive that enforces the same access rules, covering multiple devices and multiple users.
+
+## Repository structure
 
 ```
-app/                 web app statica pubblicata su GitHub Pages (nessun build step)
-  js/                moduli ES: modello dati, IndexedDB, Drive, sync, Tactic Board, viste
-  vendor/            librerie runtime copiate localmente (nessun CDN)
-  README.md          aiuto per l'allenatore (visibile nell'app: Impostazioni → Come si usa)
+app/                 static web app published on GitHub Pages
+  js/                ES modules: data model, IndexedDB, Drive, sync, groups, tactic board, views
+  vendor/            runtime libraries vendored locally
+  README.md          in-app help for coaches (Italian)
+  privacy.html       privacy notice
 docs/
-  SETUP_GOOGLE.md    configurazione Google una tantum per lo sviluppatore (Client ID)
-  ARCHITETTURA.md    moduli, dati, integrazione Drive, test
-tests/               test unitari (node --test) ed end-to-end (Playwright)
-scripts/vendor.mjs   aggiorna le librerie in app/vendor/
-.github/workflows/   test e pubblicazione automatica su GitHub Pages
+  SETUP_GOOGLE.md    one-time Google Cloud setup (Italian)
+  ARCHITETTURA.md    architecture, data model, Drive integration, tests (Italian)
+tests/               unit and end-to-end tests
+scripts/vendor.mjs   refreshes the libraries in app/vendor/
+.github/workflows/   tests and automatic deployment to GitHub Pages
 ```
 
-L'architettura è descritta in [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md).
+## Development
 
-## Sviluppo
-
-Richiede Node.js 20+ e Python 3 (per il server statico locale).
+Requires Node.js 20+ and Python 3 (for the local static server).
 
 ```bash
 npm install
 npm run serve      # http://localhost:8080
-npm test           # test unitari
-npm run e2e        # test end-to-end, richiede Chrome/Chromium (percorso con CHROME=...)
+npm test           # unit tests
+npm run e2e        # end-to-end tests, needs Chrome/Chromium (set CHROME=... for a custom path)
 ```
 
-Per aggiornare una libreria runtime: aggiorna la dipendenza, poi `npm run vendor`.
+To update a runtime library, bump the dependency and run `npm run vendor`.
 
-## Pubblicazione
+## Deployment
 
-Ogni push su `main` esegue i test e pubblica la cartella `app/` su GitHub Pages tramite [GitHub Actions](.github/workflows/pages.yml). Prima di un rilascio aumenta `VERSION` in `app/sw.js`, così le app installate propongono l'aggiornamento.
+Every push to `main` runs the tests and, if they pass, publishes the `app/` folder to GitHub Pages through [GitHub Actions](.github/workflows/pages.yml). Bump `VERSION` in `app/sw.js` before a release so installed apps offer the update.
 
-## Configurare Google Drive (sviluppatore, una volta sola)
+## Google Drive configuration
 
-È già fatta (progetto `rugby-coach-515808`, Client ID in `app/config.js`, informativa in [`app/privacy.html`](app/privacy.html)). Serve solo un **Client ID OAuth** di tipo "Applicazione web" in `app/config.js`: la procedura (progetto, Drive API, Google Auth Platform pubblicata in produzione, origini autorizzate) è in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md). Gli allenatori non vedono mai campi di configurazione.
+Already set up: the OAuth Client ID and the Picker API key are in `app/config.js` (both are meant to be public in a web app; the key is restricted to this site and to the Picker API). To run your own copy, follow [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md). Coaches never see any configuration.
 
 ## Privacy
 
-Informativa: <https://leobordo.github.io/rugby-coach/privacy.html>.
+Privacy notice: <https://leobordo.github.io/rugby-coach/privacy.html>
 
-I dati, compresi i nomi dei giocatori, restano sul dispositivo e, se collegato, nel Google Drive di chi usa l'app. Non ci sono server di terze parti né analytics; gli unici script esterni sono quelli di Google per l'accesso, caricati solo quando si usa Drive.
+All data, including players' names, stays on the user's device and, when connected, in their own Google Drive (and in the shared folder of any group they join). There are no servers of my own, no third parties and no analytics; the only external scripts are Google's, loaded only when Drive is used.
 
-## Licenza
+## License
 
 [MIT](LICENSE) © 2026 Leonardo Bordoni
