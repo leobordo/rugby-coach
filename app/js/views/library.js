@@ -2,7 +2,7 @@
 import { h, clear, textInput, numberInput, textArea, tagInput, categoryPicker, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, newExercise, duplicateRecord, normName } from '../model.js';
-import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar, drawingSrc } from './common.js';
+import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar, drawingSrc, moreMenu, recordMenuItems, viewHref, editHref, backFromEdit, finishButton } from './common.js';
 import * as sync from '../app-sync.js';
 
 export async function libraryView(root, params, query) {
@@ -17,7 +17,7 @@ export async function libraryView(root, params, query) {
   const shareLib = shareButton(async () => ({ kind: 'library', id: 'all', exercises: (await repo.list('exercise')).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it')) }), null, { label: '↗ Condividi la libreria', cls: '' });
   root.append(pageHeader('Libreria esercizi', { sub: 'Disegna un esercizio una volta e riusalo negli allenamenti.', actions: [shareLib] }),
     h('div.list-toolbar',
-      h('button.btn.primary.big', { type: 'button', on: { click: async () => { const e = newExercise(); const gid = newScopeFrom(filters.scope); if (gid) e.groupId = gid; await repo.save(e); location.hash = '#/esercizio/' + e.id; } } }, '+ Nuovo esercizio'),
+      h('button.btn.primary.big', { type: 'button', on: { click: async () => { const e = newExercise(); const gid = newScopeFrom(filters.scope); if (gid) e.groupId = gid; await repo.save(e); location.hash = editHref(e); } } }, '+ Nuovo esercizio'),
       h('div.filters', search, catSel)),
     scopeBox, grid);
   drawScope();
@@ -31,11 +31,13 @@ export async function libraryView(root, params, query) {
     clear(grid);
     if (!items.length) grid.append(h('p.empty', all.length ? 'Nessun esercizio con questi filtri.' : 'La libreria è vuota.'));
     for (const e of items) {
-      grid.append(h('a.ex-card', { href: '#/esercizio/' + e.id },
-        drawingSrc(e.drawing) ? h('img.ex-thumb', { src: drawingSrc(e.drawing), alt: 'Disegno ' + e.name }) : h('div.ex-thumb.none', 'Nessun disegno'),
-        h('strong', e.name || '(senza nome)'),
-        h('small', [(e.categories || []).join(' '), e.durationMin ? e.durationMin + ' min' : ''].filter(Boolean).join(' · ') || ' '),
-        e.example ? h('span.badge.example', 'esempio') : null, groupBadge(e)));
+      grid.append(h('article.ex-card',
+        h('a.ex-main', { href: viewHref(e) },
+          drawingSrc(e.drawing) ? h('img.ex-thumb', { src: drawingSrc(e.drawing), alt: 'Disegno ' + e.name }) : h('div.ex-thumb.none', 'Nessun disegno'),
+          h('strong', e.name || '(senza nome)'),
+          h('small', [(e.categories || []).join(' '), e.durationMin ? e.durationMin + ' min' : ''].filter(Boolean).join(' · ') || ' ')),
+        h('div.ex-foot', e.example ? h('span.badge.example', 'esempio') : null, groupBadge(e),
+          moreMenu(recordMenuItems(e, { title: e.name || 'Esercizio senza nome', onDuplicated: () => render(), onDeleted: () => render() }), { label: '⋯' }))));
     }
   }
   await render();
@@ -50,8 +52,8 @@ export async function exerciseView(root, { id }) {
   if (!e) { root.append(h('p.empty', 'Esercizio non trovato.'), h('a.btn', { href: '#/libreria' }, 'Torna alla libreria')); return; }
   const saver = autosaver(e);
   const changed = () => saver.changed();
-  root.append(pageHeader(e.name || 'Nuovo esercizio', { back: '#/libreria', actions: [saver.pill,
-    h('button.btn', { type: 'button', on: { click: async () => { saver.flush(); const d = duplicateRecord(e); await repo.save(d); location.hash = '#/esercizio/' + d.id; } } }, 'Duplica'),
+  root.append(pageHeader(e.name || 'Nuovo esercizio', { back: backFromEdit(e), actions: [saver.pill,
+    h('button.btn', { type: 'button', on: { click: async () => { saver.flush(); const d = duplicateRecord(e); await repo.save(d); location.hash = editHref(d); } } }, 'Duplica'),
     h('button.btn.danger', { type: 'button', on: { click: async () => {
       if (!(await confirmDelete(`Esercizio "${e.name || 'senza nome'}"`))) return;
       saver.dispose(); await repo.remove('exercise', e.id); toast('Esercizio eliminato.', 'ok'); location.hash = '#/libreria';
@@ -73,6 +75,7 @@ export async function exerciseView(root, { id }) {
           h('div.field', h('span.field-label', 'Categorie adatte'), categoryPicker(e, 'categories', changed)))),
       h('div.ex-form-right',
         h('span.field-label', 'Disegno (Tactic Board)'),
-        drawingCell(e, changed, { title: e.name || 'Esercizio' })))));
+        drawingCell(e, changed, { title: e.name || 'Esercizio' })))),
+  finishButton(saver, { label: '✓ Fine', back: backFromEdit(e) }));
   return () => saver.dispose();
 }

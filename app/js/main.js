@@ -12,16 +12,21 @@ import { rosterView } from './views/roster.js';
 import { settingsView, onboardingView } from './views/settings.js';
 import { docView } from './views/docs.js';
 import { groupView, joinView } from './views/groups.js';
+import { sessionRead, matchRead, planRead, exerciseRead } from './views/read.js';
 import { groupNewsText } from './groups.js';
 
 const routes = [
   [/^\/?$/, (r, m, q) => homeView(r, {}, q), 'home'],
   [/^\/seduta\/([^/]+)\/(foglio|osservazione)$/, (r, m, q) => sessionView(r, { id: m[1], tab: m[2] }, q), 'home'],
-  [/^\/seduta\/([^/]+)$/, (r, m, q) => sessionView(r, { id: m[1], tab: 'foglio' }, q), 'home'],
-  [/^\/partita\/([^/]+)$/, (r, m, q) => matchView(r, { id: m[1] }, q), 'home'],
-  [/^\/piano\/([^/]+)$/, (r, m, q) => planView(r, { id: m[1] }, q), 'home'],
+  // toccando una scheda si apre in lettura; la modifica ha il suo indirizzo
+  [/^\/seduta\/([^/]+)$/, (r, m) => sessionRead(r, { id: m[1] }), 'home'],
+  [/^\/partita\/([^/]+)\/modifica$/, (r, m, q) => matchView(r, { id: m[1] }, q), 'home'],
+  [/^\/partita\/([^/]+)$/, (r, m) => matchRead(r, { id: m[1] }), 'home'],
+  [/^\/piano\/([^/]+)\/modifica$/, (r, m, q) => planView(r, { id: m[1] }, q), 'home'],
+  [/^\/piano\/([^/]+)$/, (r, m) => planRead(r, { id: m[1] }), 'home'],
   [/^\/libreria$/, (r, m, q) => libraryView(r, {}, q), 'libreria'],
-  [/^\/esercizio\/([^/]+)$/, (r, m, q) => exerciseView(r, { id: m[1] }, q), 'libreria'],
+  [/^\/esercizio\/([^/]+)\/modifica$/, (r, m, q) => exerciseView(r, { id: m[1] }, q), 'libreria'],
+  [/^\/esercizio\/([^/]+)$/, (r, m) => exerciseRead(r, { id: m[1] }), 'libreria'],
   [/^\/rosa$/, (r, m, q) => rosterView(r, {}, q), 'rosa'],
   [/^\/impostazioni$/, (r) => settingsView(r), 'impostazioni'],
   [/^\/benvenuto$/, (r) => onboardingView(r), 'benvenuto'],

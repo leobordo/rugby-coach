@@ -23,7 +23,7 @@ app/
     app-sync.js              collega coda, Drive, login e UI; collegamento in un tocco; ripristino
     ui.js, markdown.js       componenti UI; rendering sicuro del markdown
     board/                   Tactic Board: model.js (sanificazione), render.js (SVG), editor.js
-    views/                   home, session, match, plan, library, roster, settings (+ prima schermata), docs
+    views/                   home, read (schede in sola lettura), session, match, plan, library, roster, settings (+ prima schermata), docs
 ```
 
 ## Dati
@@ -53,6 +53,14 @@ app/
   `drawingSrc` (common.js) mostra la GIF nella riga dell'esercizio, nella libreria e nella scelta dalla libreria
   (immagine ferma con `prefers-reduced-motion`). Nel Word `defaultImageFor` usa la GIF (`ImageRun` tipo `gif`)
   se c'è, altrimenti il PNG. Viaggia nei `.json` su Drive e nei file del gruppo come il resto del disegno.
+- **Lettura e modifica** (v1.8.0): toccare una scheda apre la pagina di sola lettura (`views/read.js`: niente campi,
+  solo i dati scritti, sezioni vuote nascoste, testi sempre via `h()`), che si ridisegna da sola su `saved`,
+  `remote-update`, `remote-applied`, `removed`, `imported`. Indirizzi: lettura `#/seduta|partita|piano|esercizio/<id>`;
+  modifica `#/seduta/<id>/foglio` e `#/partita|piano|esercizio/<id>/modifica` (`viewHref`/`editHref` in common.js).
+  "+ Nuovo…" e "→ Crea foglio allenamento" aprono la modifica; "✓ Fine" e "← Indietro" della modifica tornano alla
+  lettura (`backFromEdit`; un allenamento nuovo rimasto vuoto torna all'elenco). Menu ⋯ comune (`recordMenuItems`):
+  Modifica, Duplica, Elimina. Bozza dell'allenamento nuovo: la copia in memoria resta finché `db.put` non è finito,
+  così la lettura subito dopo "Fine" la trova; `setOpen(…, false)` scarta solo le bozze ancora vuote.
 - Liste dinamiche che partono vuote (esercizi, righe di osservazione, righe libere del bilancio, attività del piano;
   la partita parte con una riga) e si allungano con "+".
 

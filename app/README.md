@@ -27,7 +27,15 @@ Così si apre con un tocco come le altre app e funziona anche senza Internet.
 3. Ti serve altro? Tocca **+ Aggiungi sezione** e scegli solo quello che usi: Presenze, Osservazione esercizi,
    Bilancio della seduta, Errori e cause, Autovalutazione, Preparatore atletico. Ogni sezione si sposta con ↑ ↓
    e si toglie con ✕. Se scegli **Ricorda queste sezioni**, i prossimi allenamenti partono già così; puoi cambiarle quando vuoi in **Impostazioni › Sezioni della seduta**.
-4. Tocca **✓ Fine allenamento**. Il documento Word contiene solo le sezioni che hai messo.
+4. Tocca **✓ Fine allenamento**: l'allenamento si apre in lettura, pulito, come lo vedrai al campo.
+   Il documento Word contiene solo le sezioni che hai messo.
+
+## Leggere e modificare una scheda
+
+- Toccando un allenamento, una partita, un piano o un esercizio della libreria si apre **in lettura**: solo quello
+  che hai scritto, senza campi, facile da leggere anche dal telefono.
+- Per cambiarlo tocca **✎ Modifica**. Quando hai finito tocca **✓ Fine**: torni alla lettura.
+- Il menu **⋯** di ogni scheda (nell'elenco e nella pagina) ha sempre **Modifica** ed **Elimina**.
 
 ## Animare un'azione sulla lavagna
 

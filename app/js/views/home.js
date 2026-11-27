@@ -1,11 +1,11 @@
 // Home: elenco di allenamenti, partite e piani (R2) con lo stato di salvataggio di ogni scheda.
 // Pensata per il telefono: un pulsante grande per creare, ricerca e filtri chiusi, azioni secondarie nel menu ⋯.
-import { h, clear, confirmDialog, toast } from '../ui.js';
+import { h, clear } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { CATEGORIES, sanitizeModules, newSession, newMatch, newPlan, duplicateRecord, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
+import { CATEGORIES, sanitizeModules, newSession, newMatch, newPlan, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
 import { banners } from './banners.js';
-import { moreMenu, confirmDelete, openPrepared, scopeFilter, matchScope, newScopeFrom, groupBadge } from './common.js';
+import { moreMenu, openPrepared, scopeFilter, matchScope, newScopeFrom, groupBadge, recordMenuItems, viewHref, editHref } from './common.js';
 
 const TABS = {
   sedute: { kind: 'session', label: 'Allenamenti', newLabel: '+ Nuovo allenamento' },
@@ -21,11 +21,8 @@ function recCats(r) {
 }
 function recDate(r) { return r.kind === 'plan' ? (r.season || '') + ' ' + r.term : r.date || ''; }
 
-function openHref(r) {
-  if (r.kind === 'session') return `#/seduta/${r.id}/foglio`;
-  if (r.kind === 'match') return `#/partita/${r.id}`;
-  return `#/piano/${r.id}`;
-}
+// Toccare una scheda la apre in lettura; la modifica si apre da "✎ Modifica" (o subito, per le schede nuove)
+const openHref = (r) => viewHref(r);
 
 export async function homeView(root, params, query) {
   const tab = TABS[query.get('t')] ? query.get('t') : 'sedute';
@@ -71,7 +68,7 @@ export async function homeView(root, params, query) {
     if (gid) rec.groupId = gid;
     if (conf.kind === 'session') repo.startDraft(rec); // vuoto: si salva solo quando l'utente scrive qualcosa
     else await repo.save(rec);
-    await openPrepared(openHref(rec));
+    await openPrepared(editHref(rec));
   }
 
   let renderToken = 0;
@@ -119,13 +116,7 @@ export async function homeView(root, params, query) {
           h('strong.rec-title', title),
           h('span.rec-meta', meta || ' '),
           h('span.rec-badges', r.example ? h('span.badge.example', 'esempio') : null, groupBadge(r), h('span.status-pill.' + lab.cls, { title: lab.title }, lab.text))),
-        moreMenu([
-          h('button.btn', { type: 'button', on: { click: async () => { const d = duplicateRecord(r); if (d.kind === 'session' || d.kind === 'match') d.date = r.date; await repo.save(d); toast('Copia creata.', 'ok'); renderList(); } } }, '⧉ Duplica'),
-          h('button.btn.danger', { type: 'button', on: { click: async () => {
-            if (!(await confirmDelete(`"${title}"`))) return;
-            await repo.remove(r.kind, r.id); toast('Eliminata.', 'ok'); renderList();
-          } } }, '🗑 Elimina'),
-        ], { label: '⋯' })));
+        moreMenu(recordMenuItems(r, { title, onDuplicated: () => renderList(), onDeleted: () => renderList() }), { label: '⋯' })));
     }
   }
   await renderList();

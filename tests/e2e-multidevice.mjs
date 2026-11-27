@@ -250,7 +250,7 @@ try {
   await d1.getByLabel('Nome esercizio 4').fill('Partita');
   await settle(d1, 700);
   await d1.getByRole('button', { name: '✓ Fine allenamento' }).click();
-  await d1.waitForURL(/#\/$/);
+  await d1.waitForURL(/#\/seduta\/[^/]+$/); // "Fine" torna alla lettura della scheda
   await d1.waitForFunction(() => window.__gis && window.__gis.requests.length >= 1, null, { timeout: 10000 });
   assert.equal((await gisPrompts(d1)).at(-1), '');
   const t0 = Date.now();
@@ -281,8 +281,9 @@ try {
   await addExercise(d2, 'Esercizio D2');
   await addPlayer(d2, 'Giocatore D2');
   await d2.goto(BASE + '#/libreria'); await ready(d2);
-  await d2.locator('.ex-card', { has: d2.locator('strong', { hasText: /^Fulmine$/ }) }).click();
-  await d2.getByRole('button', { name: 'Elimina', exact: true }).click();
+  const fulmine = d2.locator('.ex-card', { has: d2.locator('strong', { hasText: /^Fulmine$/ }) });
+  await fulmine.getByRole('button', { name: 'Altre azioni' }).click(); // menu ⋯ della scheda: Elimina
+  await fulmine.getByRole('button', { name: '🗑 Elimina' }).click();
   await d2.locator('dialog.modal').getByRole('button', { name: 'Elimina' }).click();
   await d2.waitForURL(/#\/libreria$/);
   await saveAll(d2);

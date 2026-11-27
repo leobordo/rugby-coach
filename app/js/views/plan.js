@@ -5,7 +5,7 @@ import {
   CATEGORIES, BLOCK_TYPES, newBlock, templatePlanSession, newPlanSession, moveItem, removeItem, ordinalRoman,
   sessionFromPlanSession, findExerciseByName, deepClone, uid, sanitizeModules,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, finishButton, openPrepared, scopeBar } from './common.js';
+import { autosaver, pageHeader, docActions, finishButton, openPrepared, scopeBar, backFromEdit } from './common.js';
 
 export async function planView(root, { id }) {
   const p = await repo.get('plan', id);
@@ -15,8 +15,8 @@ export async function planView(root, { id }) {
   const exercises = (await repo.list('exercise')).sort((a, b) => a.name.localeCompare(b.name, 'it'));
   const dlId = 'dl-ex-' + p.id;
   const body = h('div.sheet.portrait');
-  root.append(pageHeader('Obiettivi / piano trimestrale', { sub: [p.title, p.category, p.season].filter(Boolean).join(' — '), back: '#/?t=piani',
-    actions: [saver.pill, ...docActions(p, saver)] }), scopeBar(p, saver) || '', body, finishButton(saver, { label: '✓ Fine', back: '#/?t=piani' }));
+  root.append(pageHeader('Obiettivi / piano trimestrale', { sub: [p.title, p.category, p.season].filter(Boolean).join(' — '), back: backFromEdit(p),
+    actions: [saver.pill, ...docActions(p, saver)] }), scopeBar(p, saver) || '', body, finishButton(saver, { label: '✓ Fine', back: backFromEdit(p) }));
 
   const rerender = () => { const y = window.scrollY; clear(body); render(); window.scrollTo(0, y); };
 
@@ -114,14 +114,19 @@ export async function planView(root, { id }) {
 
   async function createSheet(si) {
     saver.flush();
-    const exs = await repo.list('exercise');
-    const prefs = (await repo.getSetting('prefs', {})) || {};
-    const s = sessionFromPlanSession(p, si, exs, prefs.defaultModules ? { modules: sanitizeModules(prefs.defaultModules) } : {});
-    await repo.save(s);
-    toast(`Foglio allenamento creato dall'allenamento ${ordinalRoman(si + 1)}.`, 'ok');
-    await openPrepared(`#/seduta/${s.id}/foglio`);
+    await createSheetFromPlan(p, si);
   }
 
   render();
   return () => saver.dispose();
+}
+
+// "→ Crea foglio allenamento" (pagina di modifica e di lettura del piano): il foglio nuovo si apre in modifica
+export async function createSheetFromPlan(p, si) {
+  const exs = await repo.list('exercise');
+  const prefs = (await repo.getSetting('prefs', {})) || {};
+  const s = sessionFromPlanSession(p, si, exs, prefs.defaultModules ? { modules: sanitizeModules(prefs.defaultModules) } : {});
+  await repo.save(s);
+  toast(`Foglio allenamento creato dall'allenamento ${ordinalRoman(si + 1)}.`, 'ok');
+  await openPrepared(`#/seduta/${s.id}/foglio`);
 }

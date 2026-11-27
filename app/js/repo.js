@@ -47,9 +47,10 @@ export async function get(kind, id) {
 }
 
 export async function save(rec, { touch = true, sync = true } = {}) {
-  if (isDraft(rec.kind, rec.id)) {
+  const wasDraft = isDraft(rec.kind, rec.id);
+  if (wasDraft) {
     if (isEmptySession(rec)) return rec;
-    drafts.delete(rec.id); draftIds.delete(rec.id); // primo contenuto: da qui in poi è una scheda come le altre
+    draftIds.delete(rec.id); // primo contenuto: da qui in poi è una scheda come le altre
   }
   const gid = scopeOf(rec);
   if (!gid && 'groupId' in rec) delete rec.groupId;
@@ -59,6 +60,7 @@ export async function save(rec, { touch = true, sync = true } = {}) {
     if (gid && identity) { rec.updatedBy = { ...identity }; if (!rec.createdBy) rec.createdBy = { ...identity }; }
   }
   await db.put(STORE_OF_KIND[rec.kind], rec);
+  if (wasDraft) drafts.delete(rec.id); // la copia in memoria resta finché l'archivio non l'ha scritta
   emit('saved', { kind: rec.kind, id: rec.id, rec });
   if (sync) await afterChange(rec.kind, rec.id, gid);
   return rec;
@@ -158,7 +160,7 @@ const openRecs = new Map();
 export function setOpen(kind, id, on) {
   const k = kind + ':' + id;
   const n = (openRecs.get(k) || 0) + (on ? 1 : -1);
-  if (n > 0) openRecs.set(k, n); else { openRecs.delete(k); if (kind === 'session') drafts.delete(id); }
+  if (n > 0) openRecs.set(k, n); else { openRecs.delete(k); if (isDraft(kind, id)) drafts.delete(id); } // scarta solo se ancora vuoto
 }
 export function isOpen(kind, id) { return openRecs.has(kind + ':' + id); }
 

@@ -4,7 +4,7 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { openBoardEditor } from '../board/editor.js';
 import { safeThumb, safeAnim } from '../board/model.js';
-import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName } from '../model.js';
+import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName, duplicateRecord } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
 
@@ -158,10 +158,39 @@ export function statusPill(kind, id) {
 }
 
 // ---------- intestazione pagina ----------
+// ---------- indirizzi di una scheda: lettura, modifica, elenco ----------
+const VIEW_PATH = { session: 'seduta', match: 'partita', plan: 'piano', exercise: 'esercizio' };
+export function viewHref(rec) { return `#/${VIEW_PATH[rec.kind]}/${rec.id}`; }
+export function editHref(rec) { return rec.kind === 'session' ? `#/seduta/${rec.id}/foglio` : `#/${VIEW_PATH[rec.kind]}/${rec.id}/modifica`; }
+export function listHref(kind) { return { session: '#/', match: '#/?t=partite', plan: '#/?t=piani', exercise: '#/libreria' }[kind] || '#/'; }
+// Dalla modifica si torna alla lettura; un allenamento nuovo rimasto vuoto (scartato) torna all'elenco
+export function backFromEdit(rec) { return () => (repo.isDraft(rec.kind, rec.id) ? listHref(rec.kind) : viewHref(rec)); }
+
+// Voci del menu "⋯" di una scheda (elenco e pagina di lettura): Modifica, Duplica, Elimina
+export function recordMenuItems(rec, { title = '', onDuplicated, onDeleted } = {}) {
+  return [
+    h('button.btn', { type: 'button', on: { click: () => { sync.renewInGesture(); location.hash = editHref(rec); } } }, '✎ Modifica'),
+    h('button.btn', { type: 'button', on: { click: async () => {
+      const d = duplicateRecord(rec);
+      if (d.kind === 'session' || d.kind === 'match') d.date = rec.date;
+      await repo.save(d); toast('Copia creata.', 'ok');
+      if (onDuplicated) onDuplicated(d);
+    } } }, '⧉ Duplica'),
+    h('button.btn.danger', { type: 'button', on: { click: async () => {
+      if (!(await confirmDelete(`"${title || recordTitle(rec)}"`))) return;
+      await repo.remove(rec.kind, rec.id); toast('Eliminata.', 'ok');
+      if (onDeleted) onDeleted(); else location.hash = listHref(rec.kind);
+    } } }, '🗑 Elimina'),
+  ];
+}
+
 export function pageHeader(title, { sub, actions = [], back } = {}) {
+  const backBtn = typeof back === 'function'
+    ? h('a.btn.back', { href: '#', 'aria-label': 'Indietro', on: { click: (e) => { e.preventDefault(); location.hash = back(); } } }, '← Indietro')
+    : back ? h('a.btn.back', { href: back, 'aria-label': 'Indietro' }, '← Indietro') : null;
   return h('header.page-head',
     h('div.page-head-main',
-      back ? h('a.btn.back', { href: back, 'aria-label': 'Indietro' }, '← Indietro') : null,
+      backBtn,
       h('div', h('h1.page-title', title), sub ? h('p.page-sub', sub) : null)),
     actions.length ? h('div.page-actions', actions) : null);
 }
@@ -193,7 +222,8 @@ export function moreMenu(items, { label = '⋯ Altro', ariaLabel = 'Altre azioni
   return menu;
 }
 
-export function docActions(rec, saver) {
+export function docActions(rec, saver, { extra = [] } = {}) {
+  saver = saver || { flush() {} }; // pagina di lettura: niente da salvare
   const wordBtn = h('button.btn', { type: 'button', on: { click: async () => {
     saver.flush();
     try {
@@ -211,7 +241,7 @@ export function docActions(rec, saver) {
       else toast('Salvato su Drive ✓', 'ok');
     } catch (e) { toast(sync.friendlyError(e), 'error', 6000); }
   } } }, '☁ Salva su Drive adesso') : null;
-  return [shareButton(rec, saver), moreMenu([wordBtn, printBtn, driveBtn])];
+  return [shareButton(rec, saver), moreMenu([...extra, wordBtn, printBtn, driveBtn])];
 }
 
 // Pulsante "Fine" in fondo alla scheda: salva subito e torna all'elenco. È un gesto dell'utente, quindi se
@@ -228,7 +258,7 @@ export function finishButton(saver, { label = '✓ Fine', back = '#/' } = {}) {
     if (needToken && !sync.googleReady()) { sync.preloadGoogle(); toast('Un attimo… tocca di nuovo per salvare anche su Drive.', 'info'); return; }
     const p = needToken ? sync.syncNow() : null;
     btn.disabled = true;
-    location.hash = back;
+    location.hash = typeof back === 'function' ? back() : back;
     if (p) p.then(() => toast('Salvato su Drive ✓', 'ok'), (e) => toast('Salvato sul telefono. ' + sync.friendlyError(e), 'info', 5000));
     else { if (st.configured && st.folder) sync.runNow(); toast(st.configured && st.folder && navigator.onLine ? 'Salvato ✓' : 'Salvato sul telefono ✓', 'ok'); }
   } } }, label);

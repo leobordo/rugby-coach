@@ -1,6 +1,6 @@
 // Service worker: mette in cache l'app shell per l'uso offline (R23).
 // Aggiornare VERSION a ogni rilascio. L'elenco PRECACHE è verificato da tests/sw.test.mjs.
-const VERSION = 'rc-v1.7.1';
+const VERSION = 'rc-v1.8.0';
 const PRECACHE = [
   './',
   './index.html',
@@ -33,6 +33,7 @@ const PRECACHE = [
   './js/views/common.js',
   './js/views/banners.js',
   './js/views/home.js',
+  './js/views/read.js',
   './js/views/session.js',
   './js/views/match.js',
   './js/views/plan.js',

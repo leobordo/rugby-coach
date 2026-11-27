@@ -19,6 +19,12 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 
 ## What's new
 
+**1.8.0** — read mode
+- Tapping a session, match, plan or library drill now opens a clean **read-only page**: no input fields, only what was written, empty sections hidden, big readable text, animated drawings. On phones the match numbers become one card per row.
+- "✎ Modifica" (edit) opens the editing page; "✓ Fine" (done) and "← Indietro" (back) return to the read page. New items open directly in edit mode.
+- The "⋯" menu of every card (in the lists and on the read page) always offers Edit and Delete; library drills now have it too.
+- The read page refreshes by itself when the item changes on another device or in a group.
+
 **1.7.0** — animated plays on the tactic board
 - A drawing can now have up to 8 **phases**: tap "+ Fase", drag the players to where they go next, and repeat. In each phase a faded copy and a dotted trail show where the players were in the previous one.
 - "▶ Guarda" (watch) animates the play inside the board editor, with smooth movement from one phase to the next.

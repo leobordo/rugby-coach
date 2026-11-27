@@ -9,7 +9,7 @@ import {
   isBlankValue, planItemFromExercise, observationFromExercise, observationFromPlanItem, reviewRowLabel, formatDateIT,
   sessionCategories, ordinalRoman, toInt, SESSION_MODULES, MODULE_ORDER, moduleHasData, clearModule, isBlankObservation,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton, scopeBar } from './common.js';
+import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton, scopeBar, backFromEdit } from './common.js';
 
 const MODULE_TITLES = {
   program: ['Programma della seduta', ''],
@@ -31,9 +31,9 @@ export async function sessionView(root, { id, tab = 'foglio' }) {
   const players = await rosterNames(sessionCategories(s));
 
   const subtitle = () => [formatDateIT(s.date), sessionCategories(s).join(' · ')].filter(Boolean).join(' — ');
-  const head = pageHeader('Allenamento', { sub: subtitle(), back: '#/', actions: [saver.pill, ...docActions(s, saver)] });
+  const head = pageHeader('Allenamento', { sub: subtitle(), back: backFromEdit(s), actions: [saver.pill, ...docActions(s, saver)] });
   const body = h('div.sheet.session-sheet');
-  root.append(head, scopeBar(s, saver) || '', body, finishButton(saver, { label: '✓ Fine allenamento' }));
+  root.append(head, scopeBar(s, saver) || '', body, finishButton(saver, { label: '✓ Fine allenamento', back: backFromEdit(s) }));
 
   const rerender = () => {
     const y = window.scrollY;

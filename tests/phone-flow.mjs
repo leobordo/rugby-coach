@@ -181,18 +181,21 @@ for (const [vpName, vp] of [['390', { width: 390, height: 844 }], ['360', { widt
     const finish = page.getByRole('button', { name: /Fine allenamento/ });
     await finish.scrollIntoViewIfNeeded(); await shot('06-fine'); await audit(page, 'fine-allenamento', vpName);
     await tap(finish);
-    await page.waitForURL(/#\/$/); await page.waitForTimeout(6000);
+    await page.waitForURL(/#\/seduta\/[^/]+$/); await page.waitForTimeout(6000); // "Fine" torna alla lettura della scheda
+    check(vpName + ' fine-apre-lettura', await page.locator('main :is(input, textarea, select)').count() === 0);
     const sJson = [...drive.files.values()].filter((f) => f.mimeType === 'application/json' && f.appProperties?.rcKind === 'session');
     check(vpName + ' salvato-su-drive-da-solo', sJson.length === 1 && /Fulmine – più veloce/.test(sJson[0].content), 'json sedute=' + sJson.length);
     // condividi
-    await page.locator('.rec-card .rec-main').first().tap(); await page.waitForURL(/seduta\//);
+    await page.goto(BASE + '#/'); await ready(page);
+    await page.locator('.rec-card .rec-main').first().tap(); await page.waitForURL(/seduta\/[^/]+$/); // si apre in lettura
     await tap(page.getByRole('button', { name: /Condividi/ }).first());
     await page.waitForTimeout(2500);
     const sh = await page.evaluate(() => window.__shared);
     check(vpName + ' condividi-docx', sh.length === 1 && sh[0].files[0][0].endsWith('.docx') && sh[0].files[0][1] > 5000, JSON.stringify(sh));
     check(vpName + ' condividi-con-gesto-ancora-attivo', sh[0] && sh[0].active === true, 'userActivation al momento di share: ' + (sh[0] && sh[0].active));
     const tapsHappy = taps;
-    // token scaduto -> riapertura
+    // token scaduto -> riapertura (in modifica)
+    await tap(page.getByRole('link', { name: '✎ Modifica' })); await page.waitForURL(/\/foglio$/);
     await page.evaluate(() => { const t = JSON.parse(localStorage.getItem('rc.google.token')); t.expiresAt = Date.now() - 1000; localStorage.setItem('rc.google.token', JSON.stringify(t)); });
     await page.reload(); await ready(page);
     await page.getByLabel('Nome esercizio 2').fill('Dopo scadenza');

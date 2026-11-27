@@ -73,9 +73,18 @@ try {
   await step('dati di esempio: piano I° trimestre e libreria', async () => {
     await page.getByRole('link', { name: 'Piani', exact: true }).click();
     await page.locator('.rec-card .rec-main', { hasText: 'I° TRIMESTRE' }).first().click();
-    await page.waitForURL(/#\/piano\//);
+    await page.waitForURL(/#\/piano\/[^/]+$/);
+    // toccando la scheda si apre in LETTURA: niente campi da compilare
+    await page.getByRole('heading', { name: 'Allenamento VIII°' }).waitFor();
+    assert.equal(await page.locator('.read-plan > .read-card').count(), 8);
+    assert.equal(await page.locator('main :is(input, textarea, select)').count(), 0, 'in lettura nessun campo');
+    await shot('03-piano-lettura', { full: true });
+    // "✎ Modifica" apre la pagina con i campi
+    await page.getByRole('link', { name: '✎ Modifica' }).click();
+    await page.waitForURL(/#\/piano\/[^/]+\/modifica$/);
     await page.getByRole('heading', { name: 'VIII°' }).waitFor();
     assert.equal(await page.locator('.plan-session').count(), 8);
+    assert.ok(await page.locator('main textarea').count() > 0, 'in modifica i campi ci sono');
     await shot('03-piano', { full: true });
     await page.getByRole('link', { name: 'Libreria' }).click();
     await page.locator('.ex-card').first().waitFor();
@@ -381,7 +390,8 @@ try {
   await step('piano: crea foglio allenamento precompilato dalla seduta I°', async () => {
     await page.goto(BASE + '#/?t=piani'); await ready();
     await page.locator('.rec-card .rec-main', { hasText: 'I° TRIMESTRE' }).first().click();
-    await page.locator('.plan-session').first().getByRole('button', { name: '→ Crea foglio allenamento' }).click();
+    // dalla pagina di LETTURA del piano: il foglio nuovo si apre già in modifica
+    await page.locator('.read-plan > .read-card').first().getByRole('button', { name: '→ Crea foglio allenamento' }).click();
     await page.waitForURL(/#\/seduta\/.+\/foglio$/);
     await page.getByLabel('Nome esercizio 4').waitFor();
     const names = [];
@@ -392,7 +402,12 @@ try {
 
   await step('libreria: esercizio con disegno e uso da una riga', async () => {
     await page.getByRole('link', { name: 'Libreria' }).click();
-    await page.locator('.ex-card', { hasText: 'Mastino' }).first().click();
+    await page.locator('.ex-card .ex-main', { hasText: 'Mastino' }).first().click();
+    await page.waitForURL(/#\/esercizio\/[^/]+$/);
+    await page.getByRole('heading', { name: 'Mastino', exact: true }).waitFor();
+    assert.equal(await page.locator('main :is(input, textarea, select)').count(), 0, 'esercizio in lettura');
+    await page.getByRole('link', { name: '✎ Modifica' }).click();
+    await page.waitForURL(/#\/esercizio\/[^/]+\/modifica$/);
     await page.getByRole('button', { name: '✎ Disegna' }).click();
     const box = await page.locator('.board-svg').boundingBox();
     await page.locator('.board-tools [aria-label="Giocatore squadra A"]').click();
@@ -404,6 +419,11 @@ try {
     await page.getByLabel('Obiettivi').fill('Placcare in sicurezza');
     await settle();
     await shot('13-esercizio');
+    // "✓ Fine" torna alla lettura, con il testo e il disegno nuovi
+    await page.getByRole('button', { name: '✓ Fine' }).click();
+    await page.waitForURL(/#\/esercizio\/[^/]+$/);
+    await page.locator('.read-text', { hasText: 'Placcare in sicurezza' }).waitFor();
+    assert.equal(await page.locator('.read-drawing img').count(), 1);
     await page.goto(sessionUrl); await ready();
     await page.locator('.t-plan .tr:not(.th)').nth(2).getByRole('button', { name: '📚 Dalla libreria' }).click();
     await page.locator('dialog.modal input[type=search]').fill('masti');
@@ -571,6 +591,44 @@ try {
     await page.getByRole('button', { name: '✕ Chiudi' }).click();
     if (await page.locator('dialog.modal').count()) await page.locator('dialog.modal').getByRole('button', { name: 'Chiudi senza salvare' }).click();
     await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  await step('lettura: la scheda si apre senza campi; ⋯ con Modifica ed Elimina; Fine torna alla lettura; testi solo come testo', async () => {
+    // un testo con codice HTML dentro: in lettura deve restare testo
+    await page.goto(sessionUrl); await ready();
+    const place = page.locator('.sheet-head input[placeholder="Campo…"]');
+    await place.fill('<img src=x onerror="window.__xss=1">Campo 2');
+    await page.getByRole('button', { name: '✓ Fine allenamento' }).click();
+    await page.waitForURL(/#\/seduta\/[^/]+$/);
+    await page.locator('.read-facts dd', { hasText: '<img src=x' }).waitFor();
+    assert.equal(await page.locator('main img[src="x"]').count(), 0, 'nessun tag dai testi');
+    assert.equal(await page.evaluate(() => window.__xss), undefined);
+    assert.equal(await page.locator('main :is(input, textarea, select)').count(), 0, 'allenamento in lettura');
+    await page.locator('.read-section', { hasText: 'PROGRAMMA DELLA SEDUTA' }).waitFor();
+    await shot('15-allenamento-lettura', { full: true });
+    // "← Indietro" dalla modifica torna alla lettura
+    await page.getByRole('link', { name: '✎ Modifica' }).click();
+    await page.waitForURL(/#\/seduta\/[^/]+\/foglio$/);
+    await page.getByRole('link', { name: 'Indietro' }).click();
+    await page.waitForURL(/#\/seduta\/[^/]+$/);
+    // home: toccare la scheda apre la lettura; il menu ⋯ ha Modifica, Duplica, Elimina
+    await page.goto(BASE + '#/'); await ready();
+    const card = page.locator('.rec-card').first();
+    await card.getByRole('button', { name: 'Altre azioni' }).click();
+    for (const name of ['✎ Modifica', '⧉ Duplica', '🗑 Elimina']) await card.getByRole('button', { name }).waitFor();
+    await card.getByRole('button', { name: '✎ Modifica' }).click();
+    await page.waitForURL(/#\/seduta\/[^/]+\/foglio$/);
+    // partita: lettura con la tabella dei numeri, nessun campo; ⋯ Altro con Modifica ed Elimina
+    await page.goto(BASE + '#/?t=partite'); await ready();
+    await page.locator('.rec-card .rec-main').first().click();
+    await page.waitForURL(/#\/partita\/[^/]+$/);
+    await page.locator('.read-table, .read-empty').first().waitFor();
+    assert.equal(await page.locator('main :is(input, textarea, select)').count(), 0, 'partita in lettura');
+    await page.getByRole('button', { name: 'Altre azioni' }).click();
+    await page.locator('.page-actions .more-list').getByRole('button', { name: '🗑 Elimina' }).waitFor();
+    await page.locator('.page-actions .more-list').getByRole('button', { name: '✎ Modifica' }).click();
+    await page.waitForURL(/#\/partita\/[^/]+\/modifica$/);
+    await page.locator('.t-match').waitFor();
   });
 
   await step('elimina i dati di esempio (Impostazioni › Avanzate)', async () => {
