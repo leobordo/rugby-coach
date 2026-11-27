@@ -13,9 +13,24 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 - **Offline first**: data lives on the device (IndexedDB) and a service worker keeps the app working pitch-side without a connection.
 - **Google Drive in one tap**: sign in once and a *Rugby Coach* folder is created (or found again). Each sheet is saved as a `.docx` that mirrors the paper original, and app data is kept in a separate *File per l'app* subfolder. Files are updated in place and never duplicated.
 - **Multi-device sync**: changes made on another phone or computer arrive automatically. Concurrent edits are merged per item, an open sheet is never overwritten, and conflicting versions are kept as copies instead of being lost. Deletions go to the Drive trash and propagate to every device.
-- **Coach groups**: create a group (e.g. "U12 squad"), invite other coaches with a link, and share drills, plans, sessions, matches and the squad list. Invites can be closed, members removed, and changes from other coaches show up with their name.
+- **Coach groups**: create a group (e.g. "U12 squad"), invite other coaches with a link, and share drills, plans, sessions, matches and the squad list. Invites can be closed, members removed, and changes from other coaches show up with their name. When a teammate adds a drill or a plan, the others get a short notice in the app.
 - **Share** any sheet or the drill library as a Word document through the phone's share sheet (WhatsApp, email, Drive…), even without Drive connected.
-- **Designed for phones and for non-technical coaches**: big buttons, plain language, advanced options tucked away. It also adapts to tablets and desktops.
+- **Designed for phones and for non-technical coaches**: big buttons, plain language, advanced options tucked away. It also adapts to tablets and desktops, where pages sit in a single centred column aligned with the top bar.
+
+## What's new
+
+**1.6.3** — desktop layout
+- One content width for every page (up to 1360 px), with the logo and menu in the top bar aligned to the same column; no more pages stretched edge to edge on some screens and centred on others.
+- Empty-state messages ("no sessions yet", "not found") centred on the page together with their button.
+- Drill editor: when there is no drawing yet, the right-hand column shows a large green "Draw" area instead of a small button.
+- Smaller fixes: banner buttons no longer wrap, "Search" matches the height of "+ New", the card menu stays on the same line, and the squad list uses several columns.
+- The phone layout is unchanged (the new rules only apply above 700 px).
+
+**1.6.2**
+- A new training session left empty is discarded when you leave it: it no longer appears in the list or creates useless files on Drive. Sessions that were saved at least once are never discarded.
+- Coach groups: in-app notice when a teammate adds a drill or a plan (not on the first sync after joining, not for your own items or for edits).
+
+Installed apps pick up a new version the next time they are opened: a yellow bar offers **"Aggiorna"** (update), or the update applies after closing every window of the app.
 
 ## Technical notes
 
@@ -51,6 +66,8 @@ npm run serve      # http://localhost:8080
 npm test           # unit tests
 npm run e2e        # end-to-end tests, needs Chrome/Chromium (set CHROME=... for a custom path)
 ```
+
+On Windows, run the tests from Git Bash (the `.docx` tests need `unzip`); `tests/e2e-datafolder.mjs` also needs a GNU `tar` that accepts Windows paths.
 
 To update a runtime library, bump the dependency and run `npm run vendor`.
 
