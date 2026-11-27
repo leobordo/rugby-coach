@@ -84,6 +84,8 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     // per usare tutto lo spazio; non cambia l'orientamento salvato (miniatura e documento Word).
     let viewMode = 'auto'; // 'auto' | 'horizontal' | 'vertical'
     let temp = null;    // elemento provvisorio (freccia o tratto in disegno)
+    let phase = 0;      // fase dell'azione mostrata (0 = fase 1)
+    let playing = null; // animazione "Guarda" in corso: { raf, label }
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'board-svg');
@@ -95,6 +97,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     const redoBtn = h('button.btn', { type: 'button', title: 'Ripeti (Ctrl+Y)', 'aria-label': 'Ripeti', on: { click: () => redo() } }, '↷ Ripeti');
     const toolbar = h('div.board-tools', { role: 'toolbar', 'aria-label': 'Strumenti' });
     const ctxBar = h('div.board-ctx');
+    const phaseBar = h('div.board-phases', { role: 'group', 'aria-label': 'Fasi dell\'azione' });
     const overlay = h('div.board-overlay', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       h('div.board-top',
         h('button.btn', { type: 'button', on: { click: () => cancel() } }, '✕ Chiudi'),
@@ -108,6 +111,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
           h('button.btn', { type: 'button', on: { click: () => fieldPanel() } }, '⚙ Campo'),
           h('button.btn.primary', { type: 'button', on: { click: () => save() } }, '✓ Salva'))),
       h('div.board-main', toolbar, h('div.board-stage', svg)),
+      phaseBar,
       ctxBar,
     );
 
@@ -148,16 +152,89 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
       if (stageLandscape) return { ...f, orientation: long ? 'horizontal' : 'vertical' };
       return f;
     }
-    const viewBoard = () => ({ ...board, field: viewField() });
-    function draw() {
-      const vb = viewBoard();
-      svg.setAttribute('viewBox', boardViewBox(vb));
-      // su schermi piccoli le pedine vengono disegnate più grandi (solo a video: il disegno salvato non cambia)
+    const viewBoard = () => ({ ...B.boardAtPhase(board, phase), field: viewField() });
+    // su schermi piccoli le pedine vengono disegnate più grandi (solo a video: il disegno salvato non cambia)
+    function screenScale() {
       const st = svg.parentElement ? svg.parentElement.getBoundingClientRect() : { width: 1000, height: 1000 };
       const short = Math.min(st.width || 1000, st.height || 1000);
-      const uScale = short < 420 ? 1.35 : short < 560 ? 1.15 : 1;
-      svg.innerHTML = renderContent(vb, { selectedId, interactive: true, uScale, extraItems: temp ? [temp] : [] });
+      return short < 420 ? 1.35 : short < 560 ? 1.15 : 1;
+    }
+    // nella fase 2, 3…: dove erano le pedine nella fase prima (traccia tratteggiata)
+    function ghosts() {
+      if (!phase) return [];
+      const prev = B.positionsAt(board, phase - 1), cur = B.positionsAt(board, phase);
+      return board.items.filter((i) => prev[i.id] && cur[i.id] && (prev[i.id][0] !== cur[i.id][0] || prev[i.id][1] !== cur[i.id][1]))
+        .map((i) => ({ item: { ...i, x: prev[i.id][0], y: prev[i.id][1] }, to: cur[i.id] }));
+    }
+    function draw() {
+      if (playing) return;
+      phase = Math.min(phase, B.phaseCount(board) - 1);
+      const vb = viewBoard();
+      svg.setAttribute('viewBox', boardViewBox(vb));
+      svg.innerHTML = renderContent(vb, { selectedId, interactive: true, uScale: screenScale(), extraItems: temp ? [temp] : [], ghosts: ghosts() });
       renderCtx();
+      renderPhases();
+    }
+
+    // ----- Fasi dell'azione -----
+    function renderPhases() {
+      clear(phaseBar);
+      const n = B.phaseCount(board);
+      const btn = (label, aria, fn, { cls = '', disabled = false } = {}) =>
+        h('button.btn.small' + cls, { type: 'button', title: aria, 'aria-label': aria, disabled, on: { click: fn } }, label);
+      if (playing) {
+        playing.label = h('span.ph-label', { 'aria-live': 'polite' }, 'Fase 1 di ' + n);
+        phaseBar.append(btn('■ Ferma', 'Ferma l\'animazione', stopPlay, { cls: '.primary' }), playing.label);
+        return;
+      }
+      const go = (k) => { phase = k; selectedId = null; draw(); };
+      phaseBar.append(
+        btn('‹', 'Fase precedente', () => go(phase - 1), { cls: '.ph-nav', disabled: phase === 0 }),
+        h('span.ph-label', { 'aria-live': 'polite' }, `Fase ${phase + 1} di ${n}`),
+        btn('›', 'Fase successiva', () => go(phase + 1), { cls: '.ph-nav', disabled: phase >= n - 1 }),
+        btn('+ Fase', 'Aggiungi una fase dopo questa', () => {
+          const k = B.addPhase(board, phase);
+          if (k < 0) return;
+          phase = k; selectedId = null; commit(); draw();
+          toast('Sposta le pedine dove vanno in questa fase.', 'info');
+        }, { disabled: n >= B.MAX_PHASES }),
+        phase > 0 ? btn('🗑 Fase', 'Togli questa fase', () => { B.removePhase(board, phase); phase--; selectedId = null; commit(); draw(); }, { cls: '.danger' }) : null,
+        n > 1 ? btn('▶ Guarda', 'Guarda l\'azione animata', play, { cls: '.primary' }) : h('span.ph-hint', 'Per animare l\'azione: “+ Fase”, poi sposta le pedine.'),
+      );
+    }
+    const MOVE_MS = 900, HOLD_MS = 450;
+    function play() {
+      const n = B.phaseCount(board);
+      if (n < 2) return;
+      selectedId = null;
+      playing = { raf: 0, label: null };
+      renderPhases();
+      const field = viewField();
+      const uScale = screenScale();
+      const total = HOLD_MS + (n - 1) * (MOVE_MS + HOLD_MS);
+      const start = performance.now();
+      const frame = (now) => {
+        if (!playing) return;
+        const t = now - start;
+        if (t >= total) { stopPlay(); return; }
+        let b = board, shown = 0;
+        if (t > HOLD_MS) {
+          const k = Math.floor((t - HOLD_MS) / (MOVE_MS + HOLD_MS));
+          const f = Math.min(1, (t - HOLD_MS - k * (MOVE_MS + HOLD_MS)) / MOVE_MS);
+          b = B.boardBetween(board, k, f);
+          shown = f >= 1 ? k + 1 : k;
+        }
+        svg.innerHTML = renderContent({ ...b, field }, { uScale });
+        if (playing.label) playing.label.textContent = `Fase ${shown + 1} di ${n}`;
+        playing.raf = requestAnimationFrame(frame);
+      };
+      playing.raf = requestAnimationFrame(frame);
+    }
+    function stopPlay() {
+      if (!playing) return;
+      cancelAnimationFrame(playing.raf);
+      playing = null;
+      draw();
     }
 
     function renderCtx() {
@@ -199,7 +276,11 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         }));
       }
       ctxBar.append(
-        act('Duplica', () => { const d = B.duplicateItem(sel, board.items); board.items.push(d); selectedId = d.id; commit(); draw(); }),
+        act('Duplica', () => {
+          const d = B.duplicateItem(sel, board.items);
+          if (phase && B.movable(sel)) { const c = B.positionsAt(board, phase)[sel.id]; d.x = B.round(c[0] + 1.5); d.y = B.round(c[1] + 1.5); } // vicino a dove si vede
+          board.items.push(d); selectedId = d.id; commit(); draw();
+        }),
         act('In primo piano', () => { B.bringToFront(board, sel.id); commit(); draw(); }),
         act('In fondo', () => { B.sendToBack(board, sel.id); commit(); draw(); }),
         act('Elimina', () => { B.removeItemById(board, sel.id); selectedId = null; commit(); draw(); }, '.danger'),
@@ -228,14 +309,14 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         const data = JSON.parse(await f.text());
         board = B.normalizeBoard(data.items ? data : data.drawing || data);
         delete board.thumb;
-        selectedId = null; commit(); draw();
+        selectedId = null; phase = 0; commit(); draw();
       } catch (e) { toast('File di disegno non valido', 'error'); }
     }
 
     async function clearAll() {
       if (!board.items.length) return;
       if (await confirmDialog('Cancellare tutti gli elementi del disegno?', { okText: 'Cancella tutto', danger: true })) {
-        board.items = []; selectedId = null; commit(); draw();
+        board.items = []; delete board.phases; phase = 0; selectedId = null; commit(); draw();
       }
     }
 
@@ -280,7 +361,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     const hitId = (el) => el && el.closest && el.closest('[data-id]') ? el.closest('[data-id]').dataset.id : null;
 
     svg.addEventListener('pointerdown', (e) => {
-      if (gesture) return; // un solo puntatore alla volta (evita tocchi del palmo)
+      if (gesture || playing) return; // un solo puntatore alla volta (evita tocchi del palmo); niente modifiche durante "Guarda"
       if (e.button && e.button !== 0) return;
       e.preventDefault();
       const p = toField(e);
@@ -310,7 +391,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         }
         const it = B.createItem(t.place, p[0], p[1], t.opts || {}, board.items);
         board.items.push(it);
-        gesture = { kind: 'move', id: it.id, last: p, pid: e.pointerId, moved: true };
+        gesture = { kind: 'move', id: it.id, last: p, pid: e.pointerId, moved: true, placed: true };
         draw();
         return;
       }
@@ -341,7 +422,10 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         if (!it) return;
         const dx = p[0] - gesture.last[0], dy = p[1] - gesture.last[1];
         if (!gesture.moved && Math.hypot(dx, dy) < B.unit(board.field) * 0.15) return;
-        B.translateItem(it, dx, dy);
+        if (phase && B.movable(it) && !gesture.placed) { // fase 2, 3…: la pedina si sposta solo da questa fase in poi
+          const c = B.positionsAt(board, phase)[it.id];
+          B.setPhasePosition(board, phase, it.id, c[0] + dx, c[1] + dy);
+        } else B.translateItem(it, dx, dy);
         gesture.last = p; gesture.moved = true;
         draw();
       } else if (gesture.kind === 'handle') {
@@ -414,6 +498,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     updateButtons();
 
     function close(result) {
+      if (playing) { cancelAnimationFrame(playing.raf); playing = null; }
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
       document.body.classList.remove('board-open');
@@ -432,7 +517,8 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         return;
       }
       try {
-        const out = JSON.parse(JSON.stringify(board));
+        stopPlay();
+        const out = B.prunePhases(JSON.parse(JSON.stringify(board)));
         out.updatedAt = new Date().toISOString();
         out.thumb = await boardThumbnail(out);
         close({ board: out });

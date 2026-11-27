@@ -29,6 +29,15 @@ Così si apre con un tocco come le altre app e funziona anche senza Internet.
    e si toglie con ✕. Se scegli **Ricorda queste sezioni**, i prossimi allenamenti partono già così; puoi cambiarle quando vuoi in **Impostazioni › Sezioni della seduta**.
 4. Tocca **✓ Fine allenamento**. Il documento Word contiene solo le sezioni che hai messo.
 
+## Animare un'azione sulla lavagna
+
+1. Apri la lavagna (**✎ Disegna**) e metti pedine, palla e frecce come al solito: questa è la **Fase 1**.
+2. Tocca **+ Fase** (nella barra sotto il campo) e trascina le pedine dove vanno nel passaggio successivo.
+   Vedi in trasparenza dove erano prima. Ripeti per le fasi dopo (fino a 8).
+3. Con **‹ ›** passi da una fase all'altra; **🗑 Fase** toglie la fase che stai guardando.
+4. Tocca **▶ Guarda**: le pedine si muovono da una fase all'altra. **■ Ferma** la interrompe.
+5. Tocca **✓ Salva**. Nella scheda e nel Word si vede la Fase 1.
+
 ## Collegare Google Drive
 
 1. Tocca **Collega Google Drive** (alla prima apertura o in **Impostazioni**).

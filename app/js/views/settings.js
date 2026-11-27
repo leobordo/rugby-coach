@@ -8,7 +8,7 @@ import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES,
 import { pageHeader } from './common.js';
 import { groupsCard } from './groups.js';
 
-export const APP_VERSION = '1.6.3';
+export const APP_VERSION = '1.7.0';
 
 const folderUrl = (f) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(f.folderId);
 

@@ -8,7 +8,7 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 
 - **Training sessions built from modules**: every session starts with the *Programme* (the list of drills), and you add only the sections you need: attendance by age group, drill observations, session review, errors and causes, self-assessment, strength & conditioning. Sections can be removed and reordered.
 - **Match sheets** with large +/− counters for tackles, passes, support and more, and **term plans** that generate pre-filled sessions.
-- **Tactic board**: full pitch, half pitch or custom grid; players for two teams, ball, cones, poles, shields; run, pass and kick arrows; freehand and text; undo/redo, resize and rotate. Works with touch, mouse and pen.
+- **Tactic board**: full pitch, half pitch or custom grid; players for two teams, ball, cones, poles, shields; run, pass and kick arrows; freehand and text; undo/redo, resize and rotate; multi-phase plays that can be watched as an animation. Works with touch, mouse and pen.
 - **Drill library and squad list** by age group, reusable across sessions.
 - **Offline first**: data lives on the device (IndexedDB) and a service worker keeps the app working pitch-side without a connection.
 - **Google Drive in one tap**: sign in once and a *Rugby Coach* folder is created (or found again). Each sheet is saved as a `.docx` that mirrors the paper original, and app data is kept in a separate *File per l'app* subfolder. Files are updated in place and never duplicated.
@@ -18,6 +18,12 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 - **Designed for phones and for non-technical coaches**: big buttons, plain language, advanced options tucked away. It also adapts to tablets and desktops, where pages sit in a single centred column aligned with the top bar.
 
 ## What's new
+
+**1.7.0** — animated plays on the tactic board
+- A drawing can now have up to 8 **phases**: tap "+ Fase", drag the players to where they go next, and repeat. In each phase a faded copy and a dotted trail show where the players were in the previous one.
+- "▶ Guarda" (watch) animates the play inside the board editor, with smooth movement from one phase to the next.
+- Arrows, freehand lines and text stay the same in every phase. Drawings without phases are unchanged, and the thumbnail and Word document show phase 1.
+- Coming next: an animated GIF of the play, shown in the app and inside the Word document.
 
 **1.6.3** — desktop layout
 - One content width for every page (up to 1360 px), with the logo and menu in the top bar aligned to the same column; no more pages stretched edge to edge on some screens and centred on others.

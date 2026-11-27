@@ -267,7 +267,16 @@ export function renderContent(board, opts = {}) {
     return [x, y, playerRadius(field, s, opts.uScale || 1)];
   }).filter(Boolean);
   const sel = opts.selectedId ? items.find((i) => i.id === opts.selectedId) : null;
-  return `<g class="field">${renderField(field)}</g><g class="items">${items.map((i) => renderItem(field, i, { ...opts, obstacles })).join('')}</g><g class="sel">${renderSelection(field, sel, opts.uScale || 1)}</g>`;
+  // fasi (solo nell'editor): pedina semitrasparente dove era nella fase prima + traccia fino a dove arriva
+  const u = unit(field) * (opts.uScale || 1);
+  const ghosts = (opts.ghosts || []).map(({ item, to }) => {
+    const s = sanitizeItem(item);
+    if (!s || !Array.isArray(to)) return '';
+    const [x1, y1] = toView(field, s.x, s.y);
+    const [x2, y2] = toView(field, Number(to[0]) || 0, Number(to[1]) || 0);
+    return `<line x1="${n(x1)}" y1="${n(y1)}" x2="${n(x2)}" y2="${n(y2)}" stroke="#ffffff" stroke-width="${n(u * 0.14)}" stroke-dasharray="${n(u * 0.35)} ${n(u * 0.3)}"/>` + renderItem(field, s, { uScale: opts.uScale });
+  }).join('');
+  return `<g class="field">${renderField(field)}</g>${ghosts ? `<g class="ghosts" opacity="0.45" pointer-events="none">${ghosts}</g>` : ''}<g class="items">${items.map((i) => renderItem(field, i, { ...opts, obstacles })).join('')}</g><g class="sel">${renderSelection(field, sel, opts.uScale || 1)}</g>`;
 }
 
 export function boardViewBox(board) {

@@ -228,6 +228,8 @@ export function normalizeBoard(b) {
   const out = newBoard();
   out.field = normalizeField(b.field);
   out.items = (Array.isArray(b.items) ? b.items : []).map(sanitizeItem).filter(Boolean);
+  const phases = sanitizePhases(b.phases, out.items);
+  if (phases.length) out.phases = phases; // i disegni senza fasi restano identici a prima
   out.thumb = safeThumb(b.thumb);
   out.updatedAt = typeof b.updatedAt === 'string' ? b.updatedAt.slice(0, 40) : null;
   return out;
@@ -246,6 +248,95 @@ export function rotateItem(item, deg) {
   if (!ROTATABLE.includes(item.type)) return item;
   item.rot = (((item.rot || 0) + deg) % 360 + 360) % 360;
   return item;
+}
+
+// ---------- Fasi dell'azione (animazione) ----------
+// La fase 1 è il disegno (posizioni in items). board.phases elenca le fasi successive: ognuna salva solo le
+// pedine che si spostano in quel passaggio ({ id, pos: { idElemento: [x, y] } }); le altre restano dove erano
+// nella fase precedente. Frecce, tratti e testi sono uguali in tutte le fasi.
+export const MAX_PHASES = 8;
+export const movable = (i) => !!i && PLACEABLE.includes(i.type) && i.type !== 'text';
+export function phaseCount(board) { return 1 + ((board && board.phases) || []).length; }
+
+// Posizioni di ogni pedina alla fase k (0 = fase 1)
+export function positionsAt(board, k) {
+  const pos = {};
+  for (const i of board.items || []) if (movable(i)) pos[i.id] = [i.x, i.y];
+  const phases = board.phases || [];
+  for (let n = 0; n < Math.min(k, phases.length); n++) {
+    for (const [id, p] of Object.entries(phases[n].pos || {})) if (id in pos) pos[id] = [p[0], p[1]];
+  }
+  return pos;
+}
+
+function withPositions(board, pos) {
+  return { ...board, items: (board.items || []).map((i) => (pos[i.id] ? { ...i, x: pos[i.id][0], y: pos[i.id][1] } : i)) };
+}
+
+// Il disegno come appare alla fase k (copia: il disegno originale non cambia)
+export function boardAtPhase(board, k) {
+  if (!k) return board;
+  return withPositions(board, positionsAt(board, k));
+}
+
+const ease = (f) => f * f * (3 - 2 * f); // partenza e arrivo morbidi
+// Il disegno a metà strada tra la fase k e la k+1 (f da 0 a 1)
+export function boardBetween(board, k, f) {
+  const a = positionsAt(board, k);
+  const b = positionsAt(board, k + 1);
+  const t = ease(Math.min(1, Math.max(0, f)));
+  const pos = {};
+  for (const id of Object.keys(a)) pos[id] = [round(a[id][0] + (b[id][0] - a[id][0]) * t), round(a[id][1] + (b[id][1] - a[id][1]) * t)];
+  return withPositions(board, pos);
+}
+
+// Nuova fase subito dopo la fase k: parte con le pedine dove sono in k. Restituisce l'indice della nuova fase.
+export function addPhase(board, k) {
+  if (phaseCount(board) >= MAX_PHASES) return -1;
+  board.phases = board.phases || [];
+  board.phases.splice(k, 0, { id: itemId(), pos: {} });
+  return k + 1;
+}
+
+// Toglie la fase k (mai la fase 1). Le fasi dopo restano come le vedeva l'allenatore.
+export function removePhase(board, k) {
+  const phases = board.phases || [];
+  if (k < 1 || k > phases.length) return false;
+  const [gone] = phases.splice(k - 1, 1);
+  const next = phases[k - 1];
+  if (next) for (const [id, p] of Object.entries(gone.pos || {})) if (!(id in next.pos)) next.pos[id] = p;
+  if (!phases.length) delete board.phases;
+  return true;
+}
+
+// Sposta una pedina nella fase k (k >= 1): da questa fase in poi, finché un'altra fase non la sposta di nuovo
+export function setPhasePosition(board, k, id, x, y) {
+  const ph = (board.phases || [])[k - 1];
+  if (!ph) return false;
+  ph.pos[id] = [round(x), round(y)];
+  return true;
+}
+
+// Toglie dalle fasi gli elementi che non esistono più (o che non si spostano)
+export function prunePhases(board) {
+  if (!board.phases) return board;
+  const ids = new Set((board.items || []).filter(movable).map((i) => i.id));
+  for (const ph of board.phases) for (const id of Object.keys(ph.pos)) if (!ids.has(id)) delete ph.pos[id];
+  return board;
+}
+
+function sanitizePhases(list, items) {
+  const ids = new Set(items.filter(movable).map((i) => i.id));
+  const out = [];
+  for (const ph of (Array.isArray(list) ? list : []).filter((x) => x && typeof x === 'object').slice(0, MAX_PHASES - 1)) {
+    const pos = {};
+    for (const [id, p] of Object.entries(ph.pos && typeof ph.pos === 'object' ? ph.pos : {})) {
+      const pt = safePt(p);
+      if (ids.has(id) && pt) pos[id] = pt;
+    }
+    out.push({ id: safeId(ph.id), pos });
+  }
+  return out;
 }
 
 // ---------- Annulla / ripeti ----------

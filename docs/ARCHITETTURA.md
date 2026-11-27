@@ -36,6 +36,13 @@ app/
   Programma + le sezioni che contengono dati e toglie le righe completamente vuote dei vecchi numeri fissi.
   Il `.docx` è uno solo per seduta e contiene solo le sezioni presenti, nell'ordine scelto (chiave Drive
   `docx-plan`, così si aggiorna lo stesso file; il vecchio `.docx` dell'osservazione viene messo nel cestino).
+- **Fasi della Tactic Board** (v1.7.0, `board/model.js`): un disegno può avere `phases` (al massimo 7 oltre la fase 1,
+  `MAX_PHASES` = 8). La fase 1 sono le posizioni in `items`; ogni fase dopo salva solo le pedine che si spostano
+  (`{ id, pos: { idElemento: [x, y] } }`) e le altre restano dove erano (`positionsAt` è cumulativo). Si spostano
+  giocatori, palla, coni, paletti e scudi; frecce, tratti e testi sono uguali in tutte le fasi. `boardBetween` interpola
+  (partenza/arrivo morbidi) per "▶ Guarda" nell'editor; `removePhase` passa le posizioni della fase tolta alla
+  successiva, così le fasi dopo non cambiano. `normalizeBoard` sanifica le fasi (solo id di pedine esistenti, numeri
+  validi) e non aggiunge la chiave ai disegni senza fasi; `prunePhases` al salvataggio. Miniatura e Word: fase 1.
 - Liste dinamiche che partono vuote (esercizi, righe di osservazione, righe libere del bilancio, attività del piano;
   la partita parte con una riga) e si allungano con "+".
 

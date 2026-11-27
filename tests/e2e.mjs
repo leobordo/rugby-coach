@@ -229,10 +229,30 @@ try {
     await page.locator('dialog.modal').getByRole('button', { name: 'Minirugby grande 60×35' }).click();
     await page.locator('dialog.modal').getByRole('button', { name: 'Fatto' }).click();
     await shot('10-tactic-board');
+    // fasi dell'azione: + Fase, sposto una pedina (resta l'ombra della fase prima), Guarda, torno alla fase 1
+    const phases = page.locator('.board-phases');
+    await phases.getByText('Fase 1 di 1').waitFor();
+    await phases.getByRole('button', { name: 'Aggiungi una fase dopo questa' }).click();
+    await phases.getByText('Fase 2 di 2').waitFor();
+    await drag(at(0.62, 0.62), at(0.78, 0.5));
+    assert.equal(await page.locator('.board-svg .ghosts [data-id]').count(), 1, 'ombra della pedina nella fase prima');
+    assert.equal(await page.locator('.board-svg .items [data-id]').count(), 15, 'stessi elementi in tutte le fasi');
+    await shot('10b-tactic-board-fase2');
+    await phases.getByRole('button', { name: 'Guarda l\'azione animata' }).click();
+    await phases.getByRole('button', { name: 'Ferma l\'animazione' }).waitFor();
+    await phases.getByRole('button', { name: 'Guarda l\'azione animata' }).waitFor({ timeout: 6000 }); // finisce da sola
+    await phases.getByRole('button', { name: 'Fase precedente' }).click();
+    await phases.getByText('Fase 1 di 2').waitFor();
+    assert.equal(await page.locator('.board-svg .ghosts').count(), 0);
     await page.getByRole('button', { name: '✓ Salva' }).click();
     await page.locator('.board-overlay').waitFor({ state: 'detached' });
     await page.locator('.t-plan img.thumb').first().waitFor();
     await settle();
+    // riaperto: la fase c'è ancora
+    await page.locator('.t-plan .thumb-btn').first().click();
+    await page.locator('.board-phases').getByText('Fase 1 di 2').waitFor();
+    await page.getByRole('button', { name: '✕ Chiudi' }).click();
+    await page.locator('.board-overlay').waitFor({ state: 'detached' });
   });
 
   await step('persistenza dopo ricarica (IndexedDB)', async () => {
