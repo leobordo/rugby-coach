@@ -3,12 +3,13 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as M from '../app/js/model.js';
 import * as B from '../app/js/board/model.js';
 import { renderSVG } from '../app/js/board/render.js';
 import { buildSeed } from '../app/js/seed.js';
 
-export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const OUT = path.join(ROOT, 'out');
 
 export function hasCmd(cmd) {

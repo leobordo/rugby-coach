@@ -288,3 +288,29 @@ test('scheda aperta: unione campo per campo (quello che si scrive resta, il rest
   const r2 = M.merge3({ x: 'a' }, { x: 'b' }, { x: 'c' });
   assert.equal(r2.value.x, 'b'); assert.equal(r2.conflicts, 1, 'stesso campo cambiato da entrambi');
 });
+
+test('isEmptySession: allenamento nuovo vuoto finché l\'utente non inserisce qualcosa', () => {
+  const s = M.newSession();
+  assert.equal(M.isEmptySession(s), true, 'nuovo: vuoto');
+  assert.ok(s.date, 'ha la data proposta in automatico');
+  assert.equal(M.isEmptySession(M.newSession({ date: '2026-12-01' })), true, 'la data non conta');
+  // sezione aggiunta ma senza dati (anche con una riga vuota)
+  const sec = M.newSession({ modules: ['program', 'attendance', 'observation', 'selfeval'] });
+  sec.observations.push(M.newObservation());
+  sec.planItems.push(M.newPlanItem());
+  assert.equal(M.isEmptySession(sec), true, 'sezioni aggiunte vuote: ancora vuoto');
+  // un esercizio nel programma
+  const ex = M.newSession(); ex.planItems.push(M.newPlanItem({ name: 'Passaggi in cerchio' }));
+  assert.equal(M.isEmptySession(ex), false, 'con un esercizio');
+  // un campo compilato in una sezione
+  const att = M.newSession({ modules: ['program', 'attendance'] }); att.attendance.U8 = 5;
+  assert.equal(M.isEmptySession(att), false, 'presenze compilate');
+  const self = M.newSession({ modules: ['program', 'selfeval'] }); self.review.observer = 'Luca';
+  assert.equal(M.isEmptySession(self), false, 'autovalutazione compilata');
+  const draw = M.newSession(); draw.planItems.push(M.newPlanItem({ drawing: { v: 1 } }));
+  assert.equal(M.isEmptySession(draw), false, 'con un disegno');
+  // intestazione
+  assert.equal(M.isEmptySession(M.newSession({ categories: ['U10'] })), false, 'categoria scelta');
+  assert.equal(M.isEmptySession(M.newSession({ location: 'Campo 2' })), false, 'luogo scritto');
+  assert.equal(M.isEmptySession(M.newSession({ location: '   ' })), true, 'solo spazi: vuoto');
+});

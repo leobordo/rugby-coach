@@ -152,13 +152,41 @@ export function mergeDeletedLog(a = {}, b = {}) {
   return out;
 }
 
+// Novità da segnalare ai compagni: esercizi e piani arrivati dal gruppo che su questo telefono non c'erano,
+// aggiunti da un altro allenatore (non le modifiche, non quelli creati da me anche su un altro dispositivo)
+export const NOTIFY_KINDS = ['exercise', 'plan'];
+export function groupArrivals({ upserts = [], knownIds, myEmail }) {
+  const me = normEmail(myEmail);
+  return upserts.filter((r) => {
+    if (!r || !NOTIFY_KINDS.includes(r.kind) || (knownIds && knownIds.has(r.id))) return false;
+    const by = r.createdBy || r.updatedBy;
+    return !!(by && by.email) && normEmail(by.email) !== me;
+  });
+}
+
+// Testo dell'avviso: { name, items: [{ kind, title, by }] }
+export function groupNewsText({ name = '', items = [] } = {}) {
+  const where = name ? ` nel gruppo "${name}"` : ' nel gruppo';
+  if (items.length === 1) {
+    const x = items[0];
+    const what = x.kind === 'plan' ? 'il piano' : 'l\'esercizio';
+    return `${x.by || 'Un allenatore'} ha aggiunto ${what} "${x.title || ''}"${where}`;
+  }
+  const n = (k) => items.filter((x) => x.kind === k).length;
+  const parts = [];
+  if (n('exercise')) parts.push(n('exercise') === 1 ? '1 esercizio' : `${n('exercise')} esercizi`);
+  if (n('plan')) parts.push(n('plan') === 1 ? '1 piano' : `${n('plan')} piani`);
+  return `Novità${where}: ${parts.join(' e ')}`;
+}
+
 export const isAccessError = (e) => (e instanceof DriveHttpError && (e.status === 403 || e.status === 404)) || (e instanceof GroupError && e.code === 'noAccess');
 
 /**
  * local: archivio locale dell'utente (iniettato)
  *   items(gid, kinds) -> record del gruppo
  *   tombs(gid) -> { kind: { id: deletedAt } }
- *   merge(gid, kinds, remoteItems, remoteTombs) -> { upserts:[rec], deletes:[{kind,id}], remoteChanged }
+ *   merge(gid, kinds, remoteItems, remoteTombs, { first, name }) -> { upserts:[rec], deletes:[{kind,id}], remoteChanged }
+ *     (first = prima ricezione di quel file dopo l'ingresso: le novità non si segnalano)
  *   log(gid) -> deletedLog; setLog(gid, log)
  *   dirtyRev(gid, part) -> numero (0 = niente da inviare); clearDirty(gid, part, rev)
  * me(): { email, name }
@@ -250,6 +278,7 @@ export function createGroupsCore({ drive, local, me, now = nowISO }) {
     const fileId = g.files[part];
     const kinds = GROUP_PARTS[part];
     const out = { upserts: [], deletes: [], uploaded: false, received: false };
+    const first = !Object.prototype.hasOwnProperty.call(g.seen || {}, part); // appena entrati: niente avvisi sulle novità
     for (let attempt = 0; attempt < 4; attempt++) {
       const meta = await drive.getFile(fileId, 'id,version,trashed');
       const v = String(meta.version);
@@ -257,7 +286,7 @@ export function createGroupsCore({ drive, local, me, now = nowISO }) {
       let remoteChanged = false;
       if (v !== (g.seen || {})[part]) {
         const remote = parsePart(await drive.download(fileId), part, g.id);
-        const res = await local.merge(g.id, kinds, remote.items, remote.tombstones);
+        const res = await local.merge(g.id, kinds, remote.items, remote.tombstones, { first, name: g.name });
         const log = mergeDeletedLog(await local.log(g.id), remote.deleted);
         await local.setLog(g.id, log);
         out.upserts.push(...res.upserts); out.deletes.push(...res.deletes);

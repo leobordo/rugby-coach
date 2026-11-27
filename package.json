@@ -1,6 +1,6 @@
 {
   "name": "rugby-coach",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "private": true,
   "description": "PWA per allenatori di minirugby: schede di allenamento e partita, Tactic Board, salvataggio su Google Drive.",
   "license": "MIT",

@@ -69,7 +69,8 @@ export async function homeView(root, params, query) {
     }
     const gid = newScopeFrom(filters.scope); // dall'elenco di un gruppo: la scheda nasce nel gruppo
     if (gid) rec.groupId = gid;
-    await repo.save(rec);
+    if (conf.kind === 'session') repo.startDraft(rec); // vuoto: si salva solo quando l'utente scrive qualcosa
+    else await repo.save(rec);
     await openPrepared(openHref(rec));
   }
 

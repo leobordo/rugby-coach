@@ -12,6 +12,7 @@ import { rosterView } from './views/roster.js';
 import { settingsView, onboardingView } from './views/settings.js';
 import { docView } from './views/docs.js';
 import { groupView, joinView } from './views/groups.js';
+import { groupNewsText } from './groups.js';
 
 const routes = [
   [/^\/?$/, (r, m, q) => homeView(r, {}, q), 'home'],
@@ -135,6 +136,8 @@ function header() {
       : d.status === 'deleted' ? `Il gruppo "${d.name}" è stato eliminato${d.admin ? ' da ' + d.admin : ''}. Puoi tenerne una copia personale (Impostazioni › Gruppi).`
         : `Il gruppo "${d.name}" non si apre più.`, 'info', 8000);
   });
+  // un compagno del gruppo ha aggiunto esercizi o piani
+  repo.bus.addEventListener('group-news', (e) => toast(groupNewsText(e.detail), 'info', 5000));
   repo.bus.addEventListener('pulled', () => {
     clearTimeout(pulledShown);
     syncInd.textContent = 'Aggiornato da Drive ✓'; syncInd.className = 'sync-ind synced pulled';

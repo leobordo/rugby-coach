@@ -503,6 +503,13 @@ export function moduleHasData(session, mod) {
   }
 }
 
+// Seduta senza nulla inserito dall'utente? La data proposta, l'elenco delle sezioni e il gruppo non contano.
+export function isEmptySession(session) {
+  if (!session) return true;
+  if ((session.categories || []).length || !isBlankValue(session.location) || session.termPlanRef) return false;
+  return !MODULE_ORDER.some((m) => moduleHasData(session, m));
+}
+
 // Svuota i dati di un modulo (quando l'utente lo rimuove)
 export function clearModule(session, mod) {
   const rv = session.review || (session.review = newReview());

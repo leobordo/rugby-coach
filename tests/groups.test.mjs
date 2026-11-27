@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDriveClient } from '../app/js/drive.js';
-import { createGroupsCore, inviteLink, parseInvite, pickIds, GROUP_PARTS, GroupError, activeMembers, isMember, mergeManifest, PART_ORDER, DATA_FOLDER_NAME } from '../app/js/groups.js';
+import { createGroupsCore, inviteLink, parseInvite, pickIds, GROUP_PARTS, GroupError, activeMembers, isMember, mergeManifest, PART_ORDER, DATA_FOLDER_NAME, groupArrivals, groupNewsText } from '../app/js/groups.js';
 import { mergeCollection, newExercise, newSession, newPlayer } from '../app/js/model.js';
 import { createFakeDrive } from './fake-drive.mjs';
 
@@ -202,4 +202,41 @@ test('cartella del gruppo cestinata dall\'amministratore: per gli altri il grupp
   await A.drive.trashFile(gA.folderId);
   assert.equal(fd.isTrashed(fd.files.get(gA.files.library)), true, 'anche i file contenuti risultano nel cestino');
   assert.equal((await B.core.syncGroup(gB)).status, 'deleted');
+});
+
+test('avviso ai compagni: esercizi e piani aggiunti da un altro allenatore (non al primo ingresso, non i miei, non le modifiche)', async () => {
+  const ex = (id, email, name = 'X') => ({ id, kind: 'exercise', name, createdBy: { email, name } });
+  const ups = [ex('e1', 'anna@example.com'), ex('e2', 'Bruno@Example.com'), ex('e3', 'anna@example.com'),
+    { id: 'p1', kind: 'plan', createdBy: { email: 'anna@example.com' } }, { id: 's1', kind: 'session', createdBy: { email: 'anna@example.com' } },
+    { id: 'e4', kind: 'exercise' }];
+  const got = groupArrivals({ upserts: ups, knownIds: new Set(['e3']), myEmail: 'bruno@example.com' }).map((x) => x.id);
+  assert.deepEqual(got, ['e1', 'p1'], 'solo i nuovi esercizi/piani di altri');
+  assert.equal(groupNewsText({ name: 'U10', items: [{ kind: 'exercise', title: 'Placcaggio', by: 'Anna' }] }), 'Anna ha aggiunto l\'esercizio "Placcaggio" nel gruppo "U10"');
+  assert.equal(groupNewsText({ name: 'U10', items: [{ kind: 'plan', title: 'I TRIMESTRE', by: 'Anna' }] }), 'Anna ha aggiunto il piano "I TRIMESTRE" nel gruppo "U10"');
+  assert.equal(groupNewsText({ name: 'U10', items: [{ kind: 'exercise' }, { kind: 'exercise' }, { kind: 'plan' }] }), 'Novità nel gruppo "U10": 2 esercizi e 1 piano');
+
+  // il nucleo dice a merge se è la prima ricezione (appena entrati): lì niente avvisi
+  const fd = createFakeDrive();
+  const A = coach(fd, 'anna@example.com', 'Anna');
+  const B = coach(fd, 'bruno@example.com', 'Bruno');
+  const gA = await A.core.createGroup({ name: 'Squadra U10', category: 'U10' });
+  A.local.put(gA.id, newExercise({ name: 'Già presente', createdBy: { email: 'anna@example.com', name: 'Anna' } }));
+  await A.core.syncGroup(gA);
+  const inv = parseInvite(new URL(inviteLink('https://x/', gA).replace('#/unisciti?', '?')).searchParams);
+  await B.pick(pickIds(inv));
+  const gB = await B.core.joinGroup(inv);
+  const calls = [];
+  const merge = B.local.merge;
+  B.local.merge = async (gid, kinds, items, tombs, opts) => { const known = new Set(B.local.store.keys()); const r = await merge(gid, kinds, items, tombs); calls.push({ kinds, opts, news: groupArrivals({ upserts: r.upserts, knownIds: known, myEmail: B.email }) }); return r; };
+  await B.core.syncGroup(gB);
+  const lib1 = calls.find((c) => c.kinds.includes('exercise'));
+  assert.equal(lib1.opts.first, true, 'primo arrivo dopo l\'ingresso');
+  assert.equal(lib1.opts.name, 'Squadra U10');
+  calls.length = 0;
+  A.local.put(gA.id, newExercise({ name: 'Nuovo di Anna', createdBy: { email: 'anna@example.com', name: 'Anna' } }));
+  await A.core.syncGroup(gA);
+  await B.core.syncGroup(gB);
+  const lib2 = calls.find((c) => c.kinds.includes('exercise'));
+  assert.equal(lib2.opts.first, false);
+  assert.deepEqual(lib2.news.map((x) => x.name), ['Nuovo di Anna']);
 });

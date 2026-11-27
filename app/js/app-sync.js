@@ -4,8 +4,8 @@ import { createSyncEngine, SYNC_STATUS, COLLECTION_ID, buildRemoteIndex, localKe
 import { createDriveClient, DriveAuthError, DriveOfflineError, DriveHttpError, findOrCreateAppFolder, findOrCreateDataFolder, moveRootJson, moveFileQuietly } from './drive.js';
 import { createGoogleAuth, GoogleSignInError, MSG } from './google.js';
 import { buildArtifacts, loadDocx } from './artifacts.js';
-import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup, decideSheet, conflictCopy, sameRecordContent, isGroupId, scopeOf } from './model.js';
-import { createGroupsCore, partOfKind, inviteLink as buildInviteLink, pickIds, GroupError, isAccessError, normEmail, GROUP_PARTS } from './groups.js';
+import { SYNCABLE_KINDS, APP_ID, SCHEMA_VERSION, EPOCH, resolveDeletions, parseBackup, buildRecordBackup, decideSheet, conflictCopy, sameRecordContent, isGroupId, scopeOf, recordTitle, authorName } from './model.js';
+import { createGroupsCore, partOfKind, inviteLink as buildInviteLink, pickIds, GroupError, isAccessError, normEmail, GROUP_PARTS, groupArrivals, NOTIFY_KINDS } from './groups.js';
 import { debounce } from './ui.js';
 
 export const DEFAULT_FOLDER_NAME = 'Rugby Coach';
@@ -467,7 +467,7 @@ export async function markAllDirty() {
 
 export async function syncRecordNow(kind, id) {
   const tok = state.configured && state.folder && !auth.getValidToken() ? signIn() : null; // subito, dentro il tocco
-  await engine.markDirty(kind, id);
+  if (!repo.isDraft(kind, id)) await engine.markDirty(kind, id); // allenamento nuovo ancora vuoto: non va su Drive
   if (tok) await tok;
   return syncNow();
 }
@@ -808,12 +808,14 @@ const groupLocal = {
   tombs: (gid) => repo.getGroupTombstones(gid),
   log: (gid) => repo.getGroupDeletedLog(gid),
   setLog: (gid, log) => repo.setGroupDeletedLog(gid, log),
-  async merge(gid, kinds, items, tombs) {
+  async merge(gid, kinds, items, tombs, { first = false, name = '' } = {}) {
     const res = { upserts: [], deletes: [], remoteChanged: false };
     const base = await groupBase(gid);
     const baseUpd = {};
+    const news = [];
     for (const k of kinds) {
       const remote = items.filter((x) => x.kind === k);
+      const knownIds = !first && NOTIFY_KINDS.includes(k) ? new Set((await repo.list(k)).map((x) => x.id)) : null;
       // stessa scheda cambiata qui e da un altro allenatore dopo l'ultima versione comune: la più recente vince,
       // l'altra resta nel gruppo come copia "(conflitto del …)" (schede aperte: unisce la pagina, campo per campo)
       if (SHEET_KINDS.includes(k)) {
@@ -832,8 +834,11 @@ const groupLocal = {
       res.upserts.push(...r.upserts); res.deletes.push(...r.deletes.map((id) => ({ kind: k, id })));
       res.remoteChanged = res.remoteChanged || r.remoteChanged;
       for (const x of r.items) baseUpd[x.id] = x.updatedAt;
+      if (knownIds) news.push(...groupArrivals({ upserts: r.upserts, knownIds, myEmail: (getMe() || {}).email }));
     }
     await setGroupBase(gid, baseUpd);
+    // avviso ai compagni: "<nome> ha aggiunto l'esercizio … nel gruppo …"
+    if (news.length) repo.emit('group-news', { gid, name, items: news.map((x) => ({ kind: x.kind, title: recordTitle(x), by: authorName(x.createdBy || x.updatedBy) })) });
     return res;
   },
   async uploaded(gid, items) { const upd = {}; for (const x of items) upd[x.id] = x.updatedAt; await setGroupBase(gid, upd); },

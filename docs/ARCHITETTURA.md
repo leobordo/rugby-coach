@@ -98,6 +98,13 @@ app/
   Cartella del gruppo nel cestino (manifest `trashed`) → stato `deleted`: "Il gruppo è stato eliminato da <nome>",
   con "Tieni una copia personale" (`keepGroupCopy`). Home: l'elenco non si ricarica mentre un menu ⋯ o una finestra
   è aperta (rimandato alla chiusura).
+  v1.6.2: avviso ai compagni (solo dentro l'app, nessuna notifica di sistema): `groupLocal.merge` confronta gli id
+  locali prima dell'unione e con `groupArrivals` sceglie esercizi e piani nuovi creati da un altro allenatore
+  (`createdBy`); evento `group-news` → toast (`groupNewsText`). Alla prima ricezione di un file dopo l'ingresso
+  (`syncPart` passa `first` quando `g.seen[part]` non esiste ancora) non si avvisa.
+- **Allenamento nuovo vuoto** (v1.6.2): "+ Nuovo allenamento" usa `repo.startDraft` (solo in memoria); `repo.save` lo
+  scrive e lo mette in coda solo quando `isEmptySession` diventa falsa; `setOpen(…, false)` alla chiusura della pagina
+  lo scarta. Le schede già salvate non vengono mai scartate.
 - **Nessun duplicato**: ogni file ha `appProperties { rcApp, rcKind, rcId, rcVariant }`; il `.json` elenca gli id dei
   suoi `.docx`. Prima di creare un file la coda fa `files.list` nella cartella e aggiorna (PATCH) quelli esistenti.
 - **Esempi** con id stabili: creati su Drive solo se mancano, mai sovrascritti finché non modificati.

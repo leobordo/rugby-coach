@@ -1,6 +1,6 @@
 // Accesso ai dati: CRUD dei record, impostazioni, export/import, seed. Emette eventi su `bus`.
 import { openDB } from './db.js';
-import { STORE_OF_KIND, SYNCABLE_KINDS, COLLECTION_OF_KIND, nowISO, buildBackup, parseBackup, mergeDecision, migrateRecord, mergeCollection, SCHEMA_VERSION, scopeOf, isGroupId, recordTitle } from './model.js';
+import { STORE_OF_KIND, SYNCABLE_KINDS, COLLECTION_OF_KIND, nowISO, buildBackup, parseBackup, mergeDecision, migrateRecord, mergeCollection, SCHEMA_VERSION, scopeOf, isGroupId, recordTitle, isEmptySession } from './model.js';
 import { buildSeed } from './seed.js';
 
 export const bus = new EventTarget();
@@ -32,13 +32,25 @@ export async function list(kind) {
   return all;
 }
 
+// Allenamento appena creato e ancora vuoto: resta solo in memoria (niente elenco, niente Drive) finché
+// l'utente non inserisce qualcosa; se si esce dalla pagina prima, sparisce senza lasciare traccia.
+const drafts = new Map(); // id -> record aperto sullo schermo
+const draftIds = new Set(); // id nati vuoti e mai salvati (resta anche dopo lo scarto: un salvataggio vuoto in ritardo si ignora)
+export function startDraft(rec) { drafts.set(rec.id, rec); draftIds.add(rec.id); return rec; }
+export function isDraft(kind, id) { return kind === 'session' && draftIds.has(id); }
+
 export async function get(kind, id) {
+  if (kind === 'session' && drafts.has(id)) return drafts.get(id);
   const r = await db.get(STORE_OF_KIND[kind], id);
   if (r && r.schemaVersion !== SCHEMA_VERSION) return migrateRecord(r);
   return r;
 }
 
 export async function save(rec, { touch = true, sync = true } = {}) {
+  if (isDraft(rec.kind, rec.id)) {
+    if (isEmptySession(rec)) return rec;
+    drafts.delete(rec.id); draftIds.delete(rec.id); // primo contenuto: da qui in poi è una scheda come le altre
+  }
   const gid = scopeOf(rec);
   if (!gid && 'groupId' in rec) delete rec.groupId;
   if (touch) {
@@ -72,6 +84,7 @@ export async function moveTo(kind, id, gid) {
   const from = scopeOf(rec);
   const to = isGroupId(gid) ? gid : null;
   if (from === to) return rec;
+  if (isDraft(kind, id)) { if (to) rec.groupId = to; else delete rec.groupId; return save(rec); } // mai salvata: niente da togliere altrove
   await setTombstones(kind, { ...(await getTombstones(kind, from)), [id]: nowISO() }, from);
   if (from) await logGroupDeletion(from, rec, 'moved');
   if (to) { rec.groupId = to; if (identity) rec.createdBy = { ...identity }; } else { delete rec.groupId; delete rec.createdBy; delete rec.updatedBy; }
@@ -145,7 +158,7 @@ const openRecs = new Map();
 export function setOpen(kind, id, on) {
   const k = kind + ':' + id;
   const n = (openRecs.get(k) || 0) + (on ? 1 : -1);
-  if (n > 0) openRecs.set(k, n); else openRecs.delete(k);
+  if (n > 0) openRecs.set(k, n); else { openRecs.delete(k); if (kind === 'session') drafts.delete(id); }
 }
 export function isOpen(kind, id) { return openRecs.has(kind + ':' + id); }
 
