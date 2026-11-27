@@ -1,8 +1,8 @@
 // Scheda della partita: contatori +/- a tap grandi (decisione 6), righe con etichetta libera (decisione 5).
 import { h, clear, textInput, numberInput, textArea, rowControls, confirmDialog } from '../ui.js';
 import * as repo from '../repo.js';
-import { CATEGORIES, MATCH_COLUMNS, newMatchRow, matchColumnTotals, moveItem, removeItem, formatDateIT, normalizeUnder, toInt } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, rosterNames, finishButton, scopeBar, backFromEdit } from './common.js';
+import { visibleCategories, MATCH_COLUMNS, newMatchRow, matchColumnTotals, moveItem, removeItem, formatDateIT, normalizeUnder, toInt } from '../model.js';
+import { autosaver, pageHeader, docActions, drawingCell, rosterNames, finishButton, scopeBar, backFromEdit, myCategories } from './common.js';
 
 export async function matchView(root, { id }) {
   const m = await repo.get('match', id);
@@ -27,7 +27,7 @@ export async function matchView(root, { id }) {
     const dlId = 'dl-players-' + m.id;
     const underSel = h('select.input', { 'aria-label': 'Under' },
       h('option', { value: '' }, '—'),
-      ...CATEGORIES.map((c) => h('option', { value: c, selected: normalizeUnder(m.under) === c }, c.replace('U', ''))));
+      ...visibleCategories(myCategories(), normalizeUnder(m.under)).map((c) => h('option', { value: c, selected: normalizeUnder(m.under) === c }, c.replace('U', ''))));
     underSel.addEventListener('change', () => { m.under = underSel.value; changed(); rerender(); });
 
     body.append(h('section.sheet-head',

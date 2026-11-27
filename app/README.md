@@ -37,6 +37,19 @@ Così si apre con un tocco come le altre app e funziona anche senza Internet.
 - Per cambiarlo tocca **✎ Modifica**. Quando hai finito tocca **✓ Fine**: torni alla lettura.
 - Il menu **⋯** di ogni scheda (nell'elenco e nella pagina) ha sempre **Modifica** ed **Elimina**.
 
+## La rosa
+
+- In **Rosa** scegli la categoria in alto, scrivi il nome (e se vuoi il numero) e tocca **+ Aggiungi**.
+- Nell'elenco vedi solo **numero e nome**. Tocca un nome per cambiarlo, cambiare numero o categoria: quando hai finito
+  tocca **✓ Fine**. Per toglierlo usa **⋯ › Elimina**.
+
+## Vedere solo le mie categorie
+
+Se alleni solo alcune categorie (per esempio U10 e U12), vai in **Impostazioni › Le mie categorie** e lascia accese
+solo quelle. Da quel momento Rosa, elenchi, libreria e schede ti propongono solo le tue categorie. Le schede delle
+altre categorie non si cancellano: sono solo nascoste, e le ritrovi riaccendendo la categoria. Questa scelta vale
+per il dispositivo su cui la fai.
+
 ## Animare un'azione sulla lavagna
 
 1. Apri la lavagna (**✎ Disegna**) e metti pedine, palla e frecce come al solito: questa è la **Fase 1**.

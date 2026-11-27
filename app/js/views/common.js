@@ -4,9 +4,18 @@ import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { openBoardEditor } from '../board/editor.js';
 import { safeThumb, safeAnim } from '../board/model.js';
-import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName, duplicateRecord } from '../model.js';
+import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName, duplicateRecord, sanitizeMyCategories, inMyCategories } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
+
+// ---------- "Le mie categorie" (Impostazioni › Le mie categorie): lettura sincrona dalla copia in memoria ----------
+export function myCategories() { return sanitizeMyCategories((repo.peekSetting('prefs', {}) || {}).myCategories); }
+// Riga sotto un elenco: quanti elementi sono nascosti perché di categorie che non alleno
+export function hiddenByCategoryHint(n, what = ['scheda', 'schede']) {
+  if (!n) return null;
+  return h('p.hint.hidden-cats', `${n} ${n === 1 ? what[0] : what[1]} di categorie che non alleni ${n === 1 ? 'è nascost' + (what[0].endsWith('a') ? 'a' : 'o') : 'sono nascost' + (what[1].endsWith('e') ? 'e' : 'i')}. `,
+    h('a', { href: '#/impostazioni?vai=categorie' }, 'Le mie categorie'));
+}
 
 // ---------- eliminazione: messaggio chiaro, dialog dell'app ----------
 export const DRIVE_TRASH_MSG = 'Elimina dal telefono e da Google Drive? Su Drive finirà nel cestino (recuperabile per 30 giorni).';
@@ -301,7 +310,8 @@ export function drawingCell(row, onChange, { title = 'Disegno', compact = false 
 
 // ---------- scelta dalla libreria esercizi (R5) ----------
 export async function pickExercise({ category } = {}) {
-  const all = (await repo.list('exercise')).sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  const mine = myCategories();
+  const all = (await repo.list('exercise')).filter((e) => inMyCategories(e.categories, mine)).sort((a, b) => a.name.localeCompare(b.name, 'it'));
   const search = h('input.input', { type: 'search', placeholder: 'Cerca esercizio…', 'aria-label': 'Cerca esercizio' });
   const listEl = h('div.pick-list');
   const render = () => {

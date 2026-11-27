@@ -314,3 +314,19 @@ test('isEmptySession: allenamento nuovo vuoto finché l\'utente non inserisce qu
   assert.equal(M.isEmptySession(M.newSession({ location: 'Campo 2' })), false, 'luogo scritto');
   assert.equal(M.isEmptySession(M.newSession({ location: '   ' })), true, 'solo spazi: vuoto');
 });
+
+test('le mie categorie: scelta valida, scelte da offrire, cosa resta negli elenchi', () => {
+  assert.deepEqual(M.sanitizeMyCategories(undefined), M.CATEGORIES, 'nessuna scelta: tutte');
+  assert.deepEqual(M.sanitizeMyCategories([]), M.CATEGORIES, 'vuota: tutte (non si nasconde tutto)');
+  assert.deepEqual(M.sanitizeMyCategories(['U12', 'X', 'U10']), ['U10', 'U12'], 'ordine fisso, valori sconosciuti scartati');
+  assert.deepEqual(M.sanitizeMyCategories('U10'), M.CATEGORIES, 'formato sbagliato: tutte');
+  const mine = ['U10', 'U12'];
+  assert.deepEqual(M.visibleCategories(mine), ['U10', 'U12']);
+  assert.deepEqual(M.visibleCategories(mine, 'U6'), ['U6', 'U10', 'U12'], 'valore già usato dalla scheda resta');
+  assert.deepEqual(M.visibleCategories(mine, ['U16', '', null]), ['U10', 'U12', 'U16']);
+  assert.equal(M.inMyCategories([], mine), true, 'senza categoria: sempre visibile');
+  assert.equal(M.inMyCategories(undefined, mine), true);
+  assert.equal(M.inMyCategories(['U6', 'U8'], mine), false, 'solo categorie che non alleno: nascosto');
+  assert.equal(M.inMyCategories(['U8', 'U10'], mine), true, 'almeno una delle mie: visibile');
+  assert.equal(M.inMyCategories(['Seniores'], mine), true, 'categoria non in elenco: non si nasconde');
+});

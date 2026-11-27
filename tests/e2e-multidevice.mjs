@@ -171,7 +171,7 @@ async function addPlayer(p, name) {
   await p.goto(BASE + '#/rosa?cat=U8'); await ready(p);
   await p.getByLabel('Nome nuovo giocatore').fill(name);
   await p.getByRole('button', { name: '+ Aggiungi' }).click();
-  await p.waitForFunction((n) => [...document.querySelectorAll('.player-row input')].some((i) => i.value === n), name);
+  await p.waitForFunction((n) => [...document.querySelectorAll('.player-row .player-name')].some((i) => i.textContent === n), name);
 }
 // Impostazioni: "Salva su Drive adesso" se c'è qualcosa da salvare, finché compare "Tutto salvato su Drive ✓"
 async function saveAll(p) {

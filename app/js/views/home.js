@@ -3,9 +3,9 @@
 import { h, clear } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { CATEGORIES, sanitizeModules, newSession, newMatch, newPlan, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
+import { visibleCategories, inMyCategories, sanitizeModules, newSession, newMatch, newPlan, formatDateIT, sessionCategories, normalizeUnder, totalDuration, ordinalRoman } from '../model.js';
 import { banners } from './banners.js';
-import { moreMenu, openPrepared, scopeFilter, matchScope, newScopeFrom, groupBadge, recordMenuItems, viewHref, editHref } from './common.js';
+import { moreMenu, openPrepared, scopeFilter, matchScope, newScopeFrom, groupBadge, recordMenuItems, viewHref, editHref, myCategories, hiddenByCategoryHint } from './common.js';
 
 const TABS = {
   sedute: { kind: 'session', label: 'Allenamenti', newLabel: '+ Nuovo allenamento' },
@@ -37,7 +37,8 @@ export async function homeView(root, params, query) {
   root.append(h('nav.tabs.home-tabs', { 'aria-label': 'Archivio' },
     ...Object.entries(TABS).map(([k, t]) => h('a.tab' + (k === tab ? '.on' : ''), { href: '#/?t=' + k, 'aria-current': k === tab ? 'page' : null }, t.label))));
 
-  const catSel = h('select.input', { 'aria-label': 'Filtra per categoria' }, h('option', { value: '' }, 'Tutte le categorie'), CATEGORIES.map((c) => h('option', { value: c, selected: filters.cat === c }, c)));
+  const mine = myCategories();
+  const catSel = h('select.input', { 'aria-label': 'Filtra per categoria' }, h('option', { value: '' }, 'Tutte le categorie'), visibleCategories(mine, filters.cat).map((c) => h('option', { value: c, selected: filters.cat === c }, c)));
   const sortSel = h('select.input', { 'aria-label': 'Ordina' }, h('option', { value: 'desc', selected: filters.sort === 'desc' }, 'Più recenti prima'), h('option', { value: 'asc', selected: filters.sort === 'asc' }, 'Meno recenti prima'));
   const search = h('input.input', { type: 'search', placeholder: 'Cerca…', 'aria-label': 'Cerca' });
   const from = h('input.input.date-filter', { type: 'date', 'aria-label': 'Dalla data', title: 'Dalla data' });
@@ -45,6 +46,7 @@ export async function homeView(root, params, query) {
   const dateFilters = conf.kind === 'plan' ? null : h('span.date-range', h('span', 'dal'), from, h('span', 'al'), to);
   for (const el of [from, to]) el.addEventListener('change', () => { filters.from = from.value; filters.to = to.value; renderList(); });
   const listEl = h('div.rec-list');
+  const hiddenBox = h('div.hidden-box');
   const scopeBox = h('div.scope-box');
   const drawScope = () => { clear(scopeBox); const f = scopeFilter(filters.scope, async (v) => { filters.scope = v; const p = (await repo.getSetting('prefs', {})) || {}; await repo.setSetting('prefs', { ...p, scopeFilter: v }); drawScope(); renderList(); }); if (f) scopeBox.append(f); };
   drawScope();
@@ -79,7 +81,13 @@ export async function homeView(root, params, query) {
     if (my !== renderToken) return; // è già partito un aggiornamento più recente dell'elenco
     const gdirty = (await repo.getSetting('gdirty', {})) || {};
     if (my !== renderToken) return;
-    let items = all.filter((r) => matchScope(r, filters.scope) && (!filters.cat || recCats(r).includes(filters.cat)));
+    // categorie che non alleno (Impostazioni › Le mie categorie): nascoste, salvo se le cerco apposta col filtro
+    const scoped = all.filter((r) => matchScope(r, filters.scope));
+    let items = scoped.filter((r) => (filters.cat ? recCats(r).includes(filters.cat) : inMyCategories(recCats(r), mine)));
+    clear(hiddenBox);
+    const hiddenN = filters.cat ? 0 : scoped.length - items.length;
+    const hint = hiddenByCategoryHint(hiddenN, conf.kind === 'match' ? ['partita', 'partite'] : conf.kind === 'plan' ? ['piano', 'piani'] : ['allenamento', 'allenamenti']);
+    if (hint) hiddenBox.append(hint);
     if (filters.from) items = items.filter((r) => (r.date || '') >= filters.from);
     if (filters.to) items = items.filter((r) => (r.date || '') <= filters.to);
     if (filters.q) items = items.filter((r) => JSON.stringify([r.title, r.opponent, r.location, r.date, (r.planItems || []).map((p) => p.name)]).toLowerCase().includes(filters.q));
@@ -89,7 +97,7 @@ export async function homeView(root, params, query) {
     });
     clear(listEl);
     if (!items.length) {
-      listEl.append(h('div.empty-state', h('p', all.length ? 'Nessun risultato con questi filtri.' : `Ancora nessun${conf.kind === 'match' ? 'a partita' : conf.kind === 'plan' ? ' piano' : ' allenamento'}.`),
+      listEl.append(h('div.empty-state', h('p', all.length ? (hiddenN && !filters.q && !filters.from && !filters.to && filters.scope === 'all' ? 'Nessuna scheda nelle tue categorie.' : 'Nessun risultato con questi filtri.') : `Ancora nessun${conf.kind === 'match' ? 'a partita' : conf.kind === 'plan' ? ' piano' : ' allenamento'}.`),
         all.length ? null : h('p.hint', `Tocca "${conf.newLabel}" per iniziare.`)));
       return;
     }

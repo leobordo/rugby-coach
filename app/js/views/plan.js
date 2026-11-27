@@ -2,10 +2,10 @@
 import { h, clear, textInput, textArea, rowControls, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import {
-  CATEGORIES, BLOCK_TYPES, newBlock, templatePlanSession, newPlanSession, moveItem, removeItem, ordinalRoman,
+  visibleCategories, BLOCK_TYPES, newBlock, templatePlanSession, newPlanSession, moveItem, removeItem, ordinalRoman,
   sessionFromPlanSession, findExerciseByName, deepClone, uid, sanitizeModules,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, finishButton, openPrepared, scopeBar, backFromEdit } from './common.js';
+import { autosaver, pageHeader, docActions, finishButton, openPrepared, scopeBar, backFromEdit, myCategories } from './common.js';
 
 export async function planView(root, { id }) {
   const p = await repo.get('plan', id);
@@ -28,7 +28,7 @@ export async function planView(root, { id }) {
       if (!p.title || p.title === old) { p.title = `${ordinalRoman(p.term)} TRIMESTRE`; titleIn.value = p.title; }
       changed();
     });
-    const catSel = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, '— (facoltativa)'), CATEGORIES.map((c) => h('option', { value: c, selected: p.category === c }, c)));
+    const catSel = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, '— (facoltativa)'), visibleCategories(myCategories(), p.category).map((c) => h('option', { value: c, selected: p.category === c }, c)));
     catSel.addEventListener('change', () => { p.category = catSel.value; changed(); });
     const titleIn = textInput(p, 'title', changed, { label: 'Titolo', cls: 'title-input' });
 

@@ -1,14 +1,14 @@
 // Impostazioni e prima schermata (R17, R21, R22, R24).
 // Per l'allenatore: solo "Google Drive" in parole semplici e "Aiuto". Tutto il resto (copie di sicurezza su file,
 // recupero, disconnessione, configurazione per sviluppatori...) sta in "Avanzate", chiuso di default.
-import { h, clear, toast, confirmDialog, downloadBlob, pickFile, debounce } from '../ui.js';
+import { h, clear, toast, confirmDialog, downloadBlob, pickFile, debounce, categoryPicker } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES, MODULE_ORDER, sanitizeModules } from '../model.js';
-import { pageHeader } from './common.js';
+import { recordTitle, STORE_OF_KIND, todayISO, SESSION_MODULES, DEFAULT_MODULES, MODULE_ORDER, sanitizeModules, CATEGORIES } from '../model.js';
+import { pageHeader, myCategories } from './common.js';
 import { groupsCard } from './groups.js';
 
-export const APP_VERSION = '1.8.0';
+export const APP_VERSION = '1.9.0';
 
 const folderUrl = (f) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(f.folderId);
 
@@ -37,15 +37,16 @@ const privacyLink = () => h('a.privacy-link', { href: './privacy.html' }, 'Infor
 
 const recovered = (res) => (res && res.restored && res.restored.inserted ? `Abbiamo recuperato ${res.restored.inserted} ${res.restored.inserted === 1 ? 'scheda' : 'schede'} dal tuo Drive.` : '');
 
-export async function settingsView(root) {
+export async function settingsView(root, params, query) {
   const body = h('div.settings');
   root.append(pageHeader('Impostazioni'), body);
   const render = async () => {
     // "Sezioni della seduta" e "Aiuto" compaiono subito; Drive e Avanzate appena pronti (in parallelo)
     clear(body);
+    const cats = categoriesCard();
     const sections = sectionsCard(render);
     const help = helpCard();
-    body.append(sections, help);
+    body.append(cats, sections, help);
     const [drive, adv] = await Promise.all([driveCard(render), advancedSection(render)]);
     if (!sections.isConnected) return; // pagina già ridisegnata
     const groups = groupsCard(render);
@@ -54,6 +55,7 @@ export async function settingsView(root) {
     body.append(adv);
   };
   await render();
+  if (query && query.get('vai') === 'categorie') setTimeout(() => { const el = document.getElementById('categorie'); if (el) el.scrollIntoView(); }, 50);
   // gruppi cambiati (entrata, uscita, non si fa più parte): si aggiorna solo la scheda "Gruppi"
   const onGroups = () => {
     const old = body.querySelector('#gruppi');
@@ -88,6 +90,31 @@ async function driveCard(rerender) {
     sec.append(h('p', 'Tutto salvato su Drive ✓'));
   }
   return sec;
+}
+
+// Le categorie che alleno: le altre spariscono da schede, elenchi e Rosa (si salva su questo dispositivo)
+function categoriesCard() {
+  const holder = { cats: myCategories() };
+  const allOn = () => holder.cats.length === CATEGORIES.length;
+  const note = h('p.hint');
+  const drawNote = () => { note.textContent = allOn() ? 'Vedi tutte le categorie.' : 'Vedi solo: ' + CATEGORIES.filter((c) => holder.cats.includes(c)).join(' · ') + '. Le schede delle altre categorie restano salvate, solo nascoste.'; };
+  const picker = categoryPicker(holder, 'cats', async () => {
+    if (!holder.cats.length) { // almeno una: senza nessuna non si vedrebbe nulla
+      holder.cats.push(...myCategories());
+      for (const b of picker.children) { const on = holder.cats.includes(b.dataset.value); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
+      toast('Scegli almeno una categoria.', 'info');
+      return;
+    }
+    const sorted = CATEGORIES.filter((c) => holder.cats.includes(c));
+    const cur = (await repo.getSetting('prefs', {})) || {};
+    if (sorted.length === CATEGORIES.length) { const { myCategories: _, ...rest } = cur; await repo.setSetting('prefs', rest); } else await repo.setSetting('prefs', { ...cur, myCategories: sorted });
+    drawNote();
+    toast('Salvato.', 'ok');
+  }, { label: 'Le mie categorie' });
+  drawNote();
+  return h('section.card#categorie', h('h2', 'Le mie categorie'),
+    h('p', 'Tocca le categorie che alleni: vedrai solo quelle (nella Rosa, negli elenchi e nelle schede).'),
+    picker, note);
 }
 
 // Sezioni con cui partono i nuovi allenamenti (voce semplice, fuori da Avanzate)

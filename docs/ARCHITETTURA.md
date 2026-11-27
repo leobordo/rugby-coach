@@ -61,6 +61,14 @@ app/
   lettura (`backFromEdit`; un allenamento nuovo rimasto vuoto torna all'elenco). Menu ⋯ comune (`recordMenuItems`):
   Modifica, Duplica, Elimina. Bozza dell'allenamento nuovo: la copia in memoria resta finché `db.put` non è finito,
   così la lettura subito dopo "Fine" la trova; `setOpen(…, false)` scarta solo le bozze ancora vuote.
+- **Le mie categorie** (v1.9.0): `prefs.myCategories` (solo su questo dispositivo, assente = tutte), letta in modo
+  sincrono con `myCategories()` (common.js) da `peekSetting`. `visibleCategories(mine, keep)` dà le scelte da offrire
+  (linguette della Rosa, filtri, Categorie di seduta ed esercizio, Under, categoria di piano e gruppo, righe delle
+  Presenze) senza mai togliere un valore già usato dalla scheda; `inMyCategories(cats, mine)` nasconde dagli elenchi
+  (Schede, Libreria, "Dalla libreria") solo gli elementi con categorie tutte fuori dalle mie: quelli senza categoria
+  restano. Il filtro "Categoria" scelto a mano mostra comunque quella categoria. Il Word non cambia.
+- **Rosa** (v1.9.0): righe con solo numero e nome; tocco sul nome o "⋯ › Modifica" apre sotto la riga nome, numero,
+  categoria, "Dove si trova", Elimina e "✓ Fine".
 - Liste dinamiche che partono vuote (esercizi, righe di osservazione, righe libere del bilancio, attività del piano;
   la partita parte con una riga) e si allungano con "+".
 

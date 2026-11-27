@@ -9,7 +9,7 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 - **Training sessions built from modules**: every session starts with the *Programme* (the list of drills), and you add only the sections you need: attendance by age group, drill observations, session review, errors and causes, self-assessment, strength & conditioning. Sections can be removed and reordered.
 - **Match sheets** with large +/− counters for tackles, passes, support and more, and **term plans** that generate pre-filled sessions.
 - **Tactic board**: full pitch, half pitch or custom grid; players for two teams, ball, cones, poles, shields; run, pass and kick arrows; freehand and text; undo/redo, resize and rotate; multi-phase plays that can be watched as an animation. Works with touch, mouse and pen.
-- **Drill library and squad list** by age group, reusable across sessions.
+- **Drill library and squad list** by age group, reusable across sessions. Coaches can hide the age groups they do not coach.
 - **Offline first**: data lives on the device (IndexedDB) and a service worker keeps the app working pitch-side without a connection.
 - **Google Drive in one tap**: sign in once and a *Rugby Coach* folder is created (or found again). Each sheet is saved as a `.docx` that mirrors the paper original, and app data is kept in a separate *File per l'app* subfolder. Files are updated in place and never duplicated.
 - **Multi-device sync**: changes made on another phone or computer arrive automatically. Concurrent edits are merged per item, an open sheet is never overwritten, and conflicting versions are kept as copies instead of being lost. Deletions go to the Drive trash and propagate to every device.
@@ -18,6 +18,10 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 - **Designed for phones and for non-technical coaches**: big buttons, plain language, advanced options tucked away. It also adapts to tablets and desktops, where pages sit in a single centred column aligned with the top bar.
 
 ## What's new
+
+**1.9.0** — squad list on phones and "my age groups"
+- The squad list shows only the shirt number (if any) and the name. Tapping a name opens its fields below the row (name, number, age group, group) with "✓ Fine" (done); the "⋯" menu offers Edit and Delete. No more broken rows on phones.
+- New **Impostazioni › Le mie categorie** (my age groups): pick the age groups you coach and the others disappear from the squad tabs, the filters, the category buttons, the attendance rows and the lists (sessions, matches, plans, drills). Nothing is deleted: a short note under the list says how many items are hidden, with a link to change the choice. Items without an age group are always shown; values already used by a sheet never disappear from its choices. The setting is per device.
 
 **1.8.0** — read mode
 - Tapping a session, match, plan or library drill now opens a clean **read-only page**: no input fields, only what was written, empty sections hidden, big readable text, animated drawings. On phones the match numbers become one card per row.

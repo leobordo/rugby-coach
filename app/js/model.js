@@ -283,6 +283,22 @@ export function sortCategories(list) {
   return [...known, ...other];
 }
 
+// "Le mie categorie" (Impostazioni): quelle che l'allenatore allena. Nessuna scelta valida = tutte.
+export function sanitizeMyCategories(list) {
+  const mine = CATEGORIES.filter((c) => Array.isArray(list) && list.includes(c));
+  return mine.length ? mine : [...CATEGORIES];
+}
+// Categorie da offrire in una scelta: le mie, più quelle già usate dalla scheda (non spariscono mai)
+export function visibleCategories(mine, keep = []) {
+  const k = [].concat(keep || []).filter(Boolean);
+  return CATEGORIES.filter((c) => mine.includes(c) || k.includes(c));
+}
+// Un elemento resta negli elenchi se non ha categorie o se ne ha almeno una delle mie
+export function inMyCategories(cats, mine) {
+  const list = (cats || []).filter(Boolean);
+  return !list.length || list.some((c) => mine.includes(c) || !CATEGORIES.includes(c));
+}
+
 // Righe del bilancio generate dagli esercizi del programma (R8, 1.2-C1).
 // Una riga per esercizio (ref = id esercizio, in ordine), poi le righe libere (ref = null).
 export function syncReviewRows(session) {

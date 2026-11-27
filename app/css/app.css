@@ -808,3 +808,27 @@ dialog.modal :focus-visible { outline: 3px solid #1565c0; outline-offset: 2px; }
   .read-section, .read-head, .read-card, .read-exercise { border-width: 1px; break-inside: avoid; }
   .read-card-head .btn { display: none; }
 }
+
+/* ===== v1.9.0: Rosa a righe semplici (numero e nome) e "Le mie categorie" ===== */
+.player-row { gap: 4px; padding: 2px 0; }
+.player-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 8px;
+  background: none; border: 0; border-radius: 8px; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.player-main:hover, .player-main:focus-visible { background: #eef3ee; }
+.player-num { flex: 0 0 2.4em; text-align: right; font-weight: 800; font-size: 1.15rem; color: var(--brand-2); font-variant-numeric: tabular-nums; }
+.player-name { flex: 1; min-width: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+.player-row .more-menu { flex: 0 0 auto; }
+.player-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; margin: 6px 0; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
+.player-edit-fields { display: grid; grid-template-columns: 90px minmax(0, 1fr) 110px; gap: 10px; align-items: end; }
+.player-edit-fields .field { margin: 0; min-width: 0; }
+.player-edit-fields .input { width: 100%; max-width: none; }
+.player-edit .scope-bar { margin: 0; }
+.player-edit-actions { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.player-edit-actions .btn.primary { min-width: 140px; }
+.add-player .input:first-child { min-width: 0; flex: 1 1 180px; }
+.add-player .input.num { flex: 0 0 76px; }
+.hidden-cats { margin-top: 14px; text-align: center; }
+.hidden-cats a { font-weight: 700; }
+@media (max-width: 520px) {
+  .player-edit-fields { grid-template-columns: 80px minmax(0, 1fr); }
+  .player-edit-fields .field:last-child { grid-column: 1 / -1; }
+}

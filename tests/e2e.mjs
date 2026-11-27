@@ -631,6 +631,77 @@ try {
     await page.locator('.t-match').waitFor();
   });
 
+  await step('rosa: righe con solo numero e nome, modifica sotto la riga, ⋯ con Modifica ed Elimina; Le mie categorie', async () => {
+    const hscroll = () => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    await page.setViewportSize({ width: 360, height: 740 });
+    await page.goto(BASE + '#/rosa?cat=U8'); await ready();
+    await page.getByText('3 giocatori in U8').waitFor();
+    assert.equal(await page.locator('.player-row :is(input, select)').count(), 0, 'nelle righe solo nome e numero');
+    assert.deepEqual(await page.locator('.player-row .player-name').allTextContents(), ['Giulia', 'Luca', 'Marco']);
+    assert.ok((await hscroll()) <= 1, 'rosa senza scorrimento orizzontale');
+    // tocco sul nome: campi sotto la riga, numero, Fine
+    await page.getByRole('button', { name: 'Modifica Giulia' }).click();
+    const edit = page.locator('.player-edit');
+    await edit.getByLabel('Numero').fill('9');
+    await edit.getByLabel('Nome').fill('Giulia Bianchi Verdi Rossi');
+    assert.ok((await hscroll()) <= 1, 'modifica giocatore senza scorrimento orizzontale');
+    await shot('05b-rosa-modifica');
+    await edit.getByRole('button', { name: '✓ Fine' }).click();
+    await page.locator('.player-row', { hasText: 'Giulia Bianchi Verdi Rossi' }).locator('.player-num', { hasText: '9' }).waitFor();
+    await page.goto(BASE + '#/rosa?cat=U8'); await ready();
+    await page.locator('.player-row', { hasText: 'Giulia Bianchi Verdi Rossi' }).locator('.player-num', { hasText: '9' }).waitFor();
+    await shot('05c-rosa-telefono');
+    // ⋯ › Elimina
+    const marco = page.locator('.player-row', { hasText: 'Marco' });
+    await marco.getByRole('button', { name: 'Altre azioni per Marco' }).click();
+    await marco.getByRole('button', { name: '✎ Modifica' }).waitFor();
+    await marco.getByRole('button', { name: '🗑 Elimina' }).click();
+    await page.locator('dialog.modal').getByRole('button', { name: 'Elimina' }).click();
+    await page.getByText('2 giocatori in U8').waitFor();
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    // Impostazioni › Le mie categorie: tengo solo U10 e U12
+    await page.goto(BASE + '#/impostazioni'); await ready();
+    const cats = page.locator('#categorie');
+    for (const c of ['U6', 'U8', 'U14', 'U16']) await cats.getByRole('button', { name: c, exact: true }).click();
+    await cats.getByText('Vedi solo: U10 · U12').waitFor();
+    // non si può restare senza categorie
+    await cats.getByRole('button', { name: 'U10', exact: true }).click();
+    await cats.getByRole('button', { name: 'U12', exact: true }).click();
+    assert.equal(await cats.locator('.choice-btn.on').count(), 1, 'almeno una categoria resta scelta');
+    await cats.getByRole('button', { name: 'U10', exact: true }).click();
+    await cats.getByText('Vedi solo: U10 · U12').waitFor();
+    // Rosa: solo le mie linguette (l'ultima vista, U8, non è più tra le mie)
+    await page.goto(BASE + '#/rosa'); await ready();
+    assert.deepEqual(await page.locator('nav.tabs[aria-label="Categorie"] .tab').allTextContents(), ['U10', 'U12']);
+    await page.getByText('giocatori in U10').waitFor();
+    // Schede: il filtro offre solo le mie categorie
+    await page.goto(BASE + '#/'); await ready();
+    assert.deepEqual(await page.getByLabel('Filtra per categoria').locator('option').allTextContents(), ['Tutte le categorie', 'U10', 'U12']);
+    // nuovo allenamento: Presenze e Categorie solo con le mie
+    await page.getByRole('button', { name: '+ Nuovo allenamento' }).first().click();
+    await page.waitForURL(/#\/seduta\/.+\/foglio$/);
+    assert.deepEqual(await page.locator('.sheet-head .cats .choice-btn').allTextContents(), ['U10', 'U12']);
+    await addSections(['Presenze']);
+    await page.locator('.att-item').first().waitFor();
+    assert.deepEqual(await page.locator('.att-item:not(.total) .att-label').allTextContents(), ['N. U10', 'N. U12']);
+    // Libreria: gli esercizi solo U6/U8 sono nascosti, con l'avviso e il link alle Impostazioni
+    await page.goto(BASE + '#/libreria'); await ready();
+    await page.locator('.hidden-cats').waitFor();
+    const shown = await page.locator('.ex-card').count();
+    const visible = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('rugby-coach'); r.onsuccess = () => { const g = r.result.transaction('exercises').objectStore('exercises').getAll(); g.onsuccess = () => res(g.result.filter((e) => !(e.categories || []).length || e.categories.some((c) => c === 'U10' || c === 'U12')).length); }; }));
+    assert.equal(shown, visible, 'libreria: solo esercizi senza categoria o delle mie');
+    await shot('05d-libreria-mie-categorie');
+    // il link dell'avviso porta a "Le mie categorie"; si torna a tutte
+    await page.goto(BASE + '#/libreria'); await ready();
+    await page.locator('.hidden-cats a').click();
+    await page.waitForURL(/impostazioni\?vai=categorie/);
+    for (const c of ['U6', 'U8', 'U14', 'U16']) await page.locator('#categorie').getByRole('button', { name: c, exact: true }).click();
+    await page.locator('#categorie').getByText('Vedi tutte le categorie.').waitFor();
+    await page.goto(BASE + '#/libreria'); await ready();
+    assert.equal(await page.locator('.hidden-cats').count(), 0, 'tutte di nuovo visibili');
+  });
+
   await step('elimina i dati di esempio (Impostazioni › Avanzate)', async () => {
     await page.goto(BASE + '#/impostazioni'); await ready();
     await page.getByText('Avanzate', { exact: true }).click();

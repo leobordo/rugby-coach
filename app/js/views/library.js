@@ -1,8 +1,8 @@
 // Libreria esercizi/giochi riusabile (R5) con disegno Tactic Board (R10).
 import { h, clear, textInput, numberInput, textArea, tagInput, categoryPicker, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
-import { CATEGORIES, newExercise, duplicateRecord, normName } from '../model.js';
-import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar, drawingSrc, moreMenu, recordMenuItems, viewHref, editHref, backFromEdit, finishButton } from './common.js';
+import { newExercise, duplicateRecord, normName, visibleCategories, inMyCategories } from '../model.js';
+import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar, drawingSrc, moreMenu, recordMenuItems, viewHref, editHref, backFromEdit, finishButton, myCategories, hiddenByCategoryHint } from './common.js';
 import * as sync from '../app-sync.js';
 
 export async function libraryView(root, params, query) {
@@ -12,24 +12,31 @@ export async function libraryView(root, params, query) {
   const scopeBox = h('div.scope-box');
   const drawScope = () => { clear(scopeBox); const f = scopeFilter(filters.scope, async (v) => { filters.scope = v; const p = (await repo.getSetting('prefs', {})) || {}; await repo.setSetting('prefs', { ...p, scopeFilter: v }); drawScope(); render(); }); if (f) scopeBox.append(f); };
   const search = h('input.input', { type: 'search', placeholder: 'Cerca per nome o parola chiave…', 'aria-label': 'Cerca esercizio' });
-  const catSel = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Tutte le categorie'), CATEGORIES.map((c) => h('option', { value: c, selected: c === filters.cat }, c)));
+  const mine = myCategories();
+  const catSel = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Tutte le categorie'), visibleCategories(mine, filters.cat).map((c) => h('option', { value: c, selected: c === filters.cat }, c)));
   const grid = h('div.ex-grid');
+  const hiddenBox = h('div.hidden-box');
   const shareLib = shareButton(async () => ({ kind: 'library', id: 'all', exercises: (await repo.list('exercise')).sort((a, b) => String(a.name).localeCompare(String(b.name), 'it')) }), null, { label: '↗ Condividi la libreria', cls: '' });
   root.append(pageHeader('Libreria esercizi', { sub: 'Disegna un esercizio una volta e riusalo negli allenamenti.', actions: [shareLib] }),
     h('div.list-toolbar',
       h('button.btn.primary.big', { type: 'button', on: { click: async () => { const e = newExercise(); const gid = newScopeFrom(filters.scope); if (gid) e.groupId = gid; await repo.save(e); location.hash = editHref(e); } } }, '+ Nuovo esercizio'),
       h('div.filters', search, catSel)),
-    scopeBox, grid);
+    scopeBox, grid, hiddenBox);
   drawScope();
   search.addEventListener('input', () => { filters.q = normName(search.value); render(); });
   catSel.addEventListener('change', () => { filters.cat = catSel.value; render(); });
 
   async function render() {
     const all = (await repo.list('exercise')).sort((a, b) => a.name.localeCompare(b.name, 'it'));
-    const items = all.filter((e) => matchScope(e, filters.scope) && (!filters.cat || (e.categories || []).includes(filters.cat)) &&
+    const scoped = all.filter((e) => matchScope(e, filters.scope) &&
       (!filters.q || normName(e.name).includes(filters.q) || (e.keywords || []).some((k) => normName(k).includes(filters.q))));
-    clear(grid);
-    if (!items.length) grid.append(h('p.empty', all.length ? 'Nessun esercizio con questi filtri.' : 'La libreria è vuota.'));
+    // categorie che non alleno (Impostazioni › Le mie categorie): nascoste, salvo se le cerco apposta col filtro
+    const items = scoped.filter((e) => (filters.cat ? (e.categories || []).includes(filters.cat) : inMyCategories(e.categories, mine)));
+    clear(grid); clear(hiddenBox);
+    const hiddenN = filters.cat ? 0 : scoped.length - items.length;
+    const hint = hiddenByCategoryHint(hiddenN, ['esercizio', 'esercizi']);
+    if (hint) hiddenBox.append(hint);
+    if (!items.length) grid.append(h('p.empty', !all.length ? 'La libreria è vuota.' : hiddenN && !filters.q ? 'Nessun esercizio nelle tue categorie.' : 'Nessun esercizio con questi filtri.'));
     for (const e of items) {
       grid.append(h('article.ex-card',
         h('a.ex-main', { href: viewHref(e) },
@@ -72,7 +79,7 @@ export async function exerciseView(root, { id }) {
           h('label.field', h('span.field-label', 'Spazio'), textInput(e, 'space', changed, { placeholder: 'es. 20×15 m' }))),
         h('div.grid2',
           h('label.field', h('span.field-label', 'Durata tipica (min)'), numberInput(e, 'durationMin', changed)),
-          h('div.field', h('span.field-label', 'Categorie adatte'), categoryPicker(e, 'categories', changed)))),
+          h('div.field', h('span.field-label', 'Categorie adatte'), categoryPicker(e, 'categories', changed, { categories: visibleCategories(myCategories(), e.categories) })))),
       h('div.ex-form-right',
         h('span.field-label', 'Disegno (Tactic Board)'),
         drawingCell(e, changed, { title: e.name || 'Esercizio' })))),

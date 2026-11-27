@@ -4,12 +4,12 @@
 import { h, clear, textInput, numberInput, textArea, choice, yesNo, tagInput, categoryPicker, rowControls, confirmDialog, toast, modal } from '../ui.js';
 import * as repo from '../repo.js';
 import {
-  CATEGORIES, OBSERVATION_LEVELS, ERRORS_CORRECTED_LABEL, WORK_TIME_OPTIONS, SOLICITATION_OPTIONS,
+  CATEGORIES, visibleCategories, OBSERVATION_LEVELS, ERRORS_CORRECTED_LABEL, WORK_TIME_OPTIONS, SOLICITATION_OPTIONS,
   newPlanItem, newObservation, newReviewRow, syncReviewRows, totalAttendance, totalDuration, moveItem, removeItem,
   isBlankValue, planItemFromExercise, observationFromExercise, observationFromPlanItem, reviewRowLabel, formatDateIT,
   sessionCategories, ordinalRoman, toInt, SESSION_MODULES, MODULE_ORDER, moduleHasData, clearModule, isBlankObservation,
 } from '../model.js';
-import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton, scopeBar, backFromEdit } from './common.js';
+import { autosaver, pageHeader, docActions, drawingCell, pickExercise, saveRowToLibrary, rosterNames, nameChips, insertName, finishButton, scopeBar, backFromEdit, myCategories } from './common.js';
 
 const MODULE_TITLES = {
   program: ['Programma della seduta', ''],
@@ -48,7 +48,7 @@ export async function sessionView(root, { id, tab = 'foglio' }) {
     body.append(h('section.sheet-head',
       h('label.inline-field.big', h('span', 'ALLENAMENTO DEL'), textInput(s, 'date', () => { changed(); }, { type: 'date', label: 'Data allenamento' })),
       h('div.head-extra',
-        h('div.field', h('span.field-label', 'Categorie (facoltativo)'), categoryPicker(s, 'categories', changed)),
+        h('div.field', h('span.field-label', 'Categorie (facoltativo)'), categoryPicker(s, 'categories', changed, { categories: visibleCategories(myCategories(), s.categories) })),
         h('label.field', h('span.field-label', 'Luogo (facoltativo)'), textInput(s, 'location', changed, { placeholder: 'Campo…' }))),
       plan ? h('p.hint', 'Creato dal piano ', h('a', { href: `#/piano/${plan.id}` }, `${plan.title} — allenamento ${ordinalRoman((s.termPlanRef.sessionIndex || 0) + 1)}`)) : null,
     ));
@@ -150,7 +150,8 @@ export async function sessionView(root, { id, tab = 'foglio' }) {
   function attendanceModule(sec) {
     const totEl = h('strong.big-num', String(totalAttendance(s)));
     sec.append(h('div.attendance', { role: 'group', 'aria-label': 'Presenti per categoria' },
-      ...CATEGORIES.map((c) => {
+      // solo le mie categorie (Impostazioni), più quelle dove ho già segnato dei presenti
+      ...visibleCategories(myCategories(), CATEGORIES.filter((c) => s.attendance[c] !== null && s.attendance[c] !== undefined && s.attendance[c] !== '')).map((c) => {
         const holder = { v: s.attendance[c] };
         const inp = numberInput(holder, 'v', () => { s.attendance[c] = holder.v; totEl.textContent = String(totalAttendance(s)); changed(); }, { label: 'Presenti ' + c, placeholder: '—' });
         const step = (d) => { const v = Math.max(0, toInt(s.attendance[c]) + d); s.attendance[c] = v; inp.value = v; totEl.textContent = String(totalAttendance(s)); changed(); };

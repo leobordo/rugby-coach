@@ -3,9 +3,9 @@
 import { h, clear, toast, confirmDialog, modal } from '../ui.js';
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
-import { CATEGORIES, authorName, formatDateIT } from '../model.js';
+import { visibleCategories, authorName, formatDateIT } from '../model.js';
 import { parseInvite, activeMembers, normEmail, validEmail } from '../groups.js';
-import { pageHeader } from './common.js';
+import { pageHeader, myCategories } from './common.js';
 
 const folderUrl = (id) => 'https://drive.google.com/drive/folders/' + encodeURIComponent(id);
 const dateIT = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleDateString('it-IT') : ''; };
@@ -51,7 +51,7 @@ export function groupsCard(rerender) {
 
 async function createGroupDialog() {
   const name = h('input.input', { type: 'text', maxlength: 60, placeholder: 'Squadra U12', 'aria-label': 'Nome del gruppo', autocomplete: 'off' });
-  const cat = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Categoria (facoltativa)'), CATEGORIES.map((c) => h('option', { value: c }, c)));
+  const cat = h('select.input', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Categoria (facoltativa)'), visibleCategories(myCategories()).map((c) => h('option', { value: c }, c)));
   const ok = await modal({ title: 'Crea un gruppo', focus: name, content: h('div',
     h('label.field', h('span.field-label', 'Nome del gruppo'), name),
     h('label.field', h('span.field-label', 'Categoria'), cat),

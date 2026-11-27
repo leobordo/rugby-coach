@@ -1,13 +1,16 @@
 // Rosa per categoria (decisione 4): nomi inseriti una volta e scelti da elenco nelle schede.
 import { h, clear, textInput, confirmDialog, toast, debounce } from '../ui.js';
 import * as repo from '../repo.js';
-import { CATEGORIES, newPlayer } from '../model.js';
-import { pageHeader, confirmDelete, scopeFilter, matchScope, newScopeFrom, scopeBar, confirmRosterShare } from './common.js';
+import { CATEGORIES, newPlayer, visibleCategories } from '../model.js';
+import { pageHeader, confirmDelete, scopeFilter, matchScope, newScopeFrom, scopeBar, confirmRosterShare, myCategories, moreMenu } from './common.js';
 import * as sync from '../app-sync.js';
 import { scopeOf } from '../model.js';
 
 export async function rosterView(root, params, query) {
-  const cat = CATEGORIES.includes(query.get('cat')) ? query.get('cat') : ((await repo.getSetting('prefs', {})) || {}).rosterCat || 'U8';
+  // categoria: quella chiesta, altrimenti l'ultima vista se è tra le mie (Impostazioni › Le mie categorie), altrimenti la prima delle mie
+  const mine = myCategories();
+  const last = ((await repo.getSetting('prefs', {})) || {}).rosterCat;
+  const cat = CATEGORIES.includes(query.get('cat')) ? query.get('cat') : mine.includes(last) ? last : mine.includes('U8') && mine.length === CATEGORIES.length ? 'U8' : mine[0];
   const prefs0 = (await repo.getSetting('prefs', {})) || {};
   let scope = prefs0.scopeFilter || 'all';
   if (scope !== 'all' && scope !== 'personal' && !sync.groupById(scope)) scope = 'all';
@@ -18,7 +21,7 @@ export async function rosterView(root, params, query) {
   const drawScope = () => { clear(scopeBox); const f = scopeFilter(scope, async (v) => { scope = v; const p = (await repo.getSetting('prefs', {})) || {}; await repo.setSetting('prefs', { ...p, scopeFilter: v }); drawScope(); render(); }); if (f) scopeBox.append(f); };
   drawScope();
   root.append(scopeBox);
-  root.append(h('nav.tabs', { 'aria-label': 'Categorie' }, CATEGORIES.map((c) => h('a.tab' + (c === cat ? '.on' : ''), { href: '#/rosa?cat=' + c }, c))));
+  root.append(h('nav.tabs', { 'aria-label': 'Categorie' }, visibleCategories(mine, cat).map((c) => h('a.tab' + (c === cat ? '.on' : ''), { href: '#/rosa?cat=' + c }, c))));
   const listEl = h('div.roster');
   const nameIn = h('input.input', { type: 'text', placeholder: 'Nome e cognome (o solo nome)', 'aria-label': 'Nome nuovo giocatore', enterkeyhint: 'done' });
   const numIn = h('input.input.num', { type: 'text', inputmode: 'numeric', placeholder: 'N°', 'aria-label': 'Numero (facoltativo)', maxlength: 3 });
@@ -46,20 +49,43 @@ export async function rosterView(root, params, query) {
     if (my !== renderToken) return; // un render più recente è già partito
     clear(listEl);
     listEl.append(h('p.hint', `${players.length} ${players.length === 1 ? 'giocatore' : 'giocatori'} in ${cat}`));
-    for (const p of players) {
-      const save = debounce(() => repo.save(p), 400);
-      const catSel = h('select.input.small', { 'aria-label': 'Sposta in categoria' }, CATEGORIES.map((c) => h('option', { value: c, selected: c === p.category }, c)));
-      catSel.addEventListener('change', async () => { p.category = catSel.value; await repo.save(p); toast(`${p.name} spostato in ${p.category}.`, 'ok'); render(); });
-      listEl.append(h('div.player-row',
-        textInput(p, 'number', save, { label: 'Numero', cls: 'num' }),
-        textInput(p, 'name', save, { label: 'Nome' }),
-        catSel,
-        scopeOf(p) || sync.activeGroups().length ? scopeBar(p) : null,
-        h('button.icon-btn.danger', { type: 'button', 'aria-label': 'Rimuovi ' + p.name, on: { click: async () => {
-          if (!(await confirmDelete(`${p.name || 'Giocatore'} (rosa)`))) return;
-          await repo.remove('player', p.id); render();
-        } } }, '✕')));
-    }
+    for (const p of players) listEl.append(editing === p.id ? editRow(p) : playerRow(p));
+  }
+
+  // Riga semplice: solo numero (se c'è) e nome. Tocco sul nome o "⋯ › Modifica" apre i campi sotto.
+  let editing = null;
+  const openEdit = (id) => { editing = id; render().then(() => { const el = listEl.querySelector('.player-edit input[aria-label="Nome"]'); if (el) el.focus(); }); };
+  const removePlayer = async (p) => {
+    if (!(await confirmDelete(`${p.name || 'Giocatore'} (rosa)`))) return;
+    if (editing === p.id) editing = null;
+    await repo.remove('player', p.id); render();
+  };
+  function playerRow(p) {
+    return h('div.player-row',
+      h('button.player-main', { type: 'button', 'aria-label': 'Modifica ' + (p.name || 'giocatore'), on: { click: () => openEdit(p.id) } },
+        h('span.player-num', p.number ? String(p.number) : ''),
+        h('span.player-name', p.name || '(senza nome)')),
+      moreMenu([
+        h('button.btn', { type: 'button', on: { click: () => openEdit(p.id) } }, '✎ Modifica'),
+        h('button.btn.danger', { type: 'button', on: { click: () => removePlayer(p) } }, '🗑 Elimina'),
+      ], { label: '⋯', ariaLabel: 'Altre azioni per ' + (p.name || 'giocatore') }));
+  }
+  function editRow(p) {
+    const save = debounce(() => repo.save(p), 400);
+    const catSel = h('select.input', { 'aria-label': 'Categoria' }, visibleCategories(mine, p.category).map((c) => h('option', { value: c, selected: c === p.category }, c)));
+    catSel.addEventListener('change', async () => { save.flush(); p.category = catSel.value; await repo.save(p); toast(`${p.name} spostato in ${p.category}.`, 'ok'); editing = null; render(); });
+    const done = async () => { save.flush(); editing = null; render(); };
+    const box = h('div.player-edit', { role: 'group', 'aria-label': 'Modifica ' + (p.name || 'giocatore') },
+      h('div.player-edit-fields',
+        h('label.field.num-field', h('span.field-label', 'Numero'), textInput(p, 'number', save, { label: 'Numero', cls: 'num' })),
+        h('label.field', h('span.field-label', 'Nome'), textInput(p, 'name', save, { label: 'Nome' })),
+        h('label.field', h('span.field-label', 'Categoria'), catSel)),
+      scopeOf(p) || sync.activeGroups().length ? scopeBar(p) : null,
+      h('div.player-edit-actions',
+        h('button.btn.danger', { type: 'button', on: { click: () => removePlayer(p) } }, '🗑 Elimina'),
+        h('button.btn.primary', { type: 'button', on: { click: done } }, '✓ Fine')));
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); done(); } });
+    return box;
   }
   await render();
   // novità ricevute da un altro dispositivo (senza disturbare chi sta scrivendo un nome)

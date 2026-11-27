@@ -209,7 +209,7 @@ try {
   await C.locator('dialog.modal').getByText('nomi di bambini e ragazzi').waitFor();
   await shot(C, '63-telefono-avviso-minori');
   await confirmModal(C, 'Ho capito, condividi');
-  await C.waitForFunction(() => [...document.querySelectorAll('.player-row input')].some((i) => i.value === 'Giocatore di Carla'));
+  await C.waitForFunction(() => [...document.querySelectorAll('.player-row .player-name')].some((i) => i.textContent === 'Giocatore di Carla'));
   // C sposta una sua scheda personale nel gruppo
   await C.goto(BASE + '#/seduta/' + cMove + '/foglio'); await ready(C);
   await C.getByLabel('Dove si trova').selectOption({ label: 'Gruppo Squadra U12' });
