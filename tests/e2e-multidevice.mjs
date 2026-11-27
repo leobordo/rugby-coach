@@ -10,9 +10,10 @@ import { spawn, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { chromium } = await import('playwright-core');
 const SHOTS = path.join(ROOT, 'out', 'screens');
 fs.mkdirSync(SHOTS, { recursive: true });

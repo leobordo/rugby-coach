@@ -4,9 +4,10 @@
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { chromium } = await import('playwright-core');
 const SHOTS = path.join(ROOT, 'out', 'screens');
 fs.rmSync(SHOTS, { recursive: true, force: true });
@@ -291,17 +292,12 @@ try {
     await page.locator('section#sezioni').getByRole('button', { name: 'Torna al solo Programma' }).click();
     await page.waitForFunction(() => document.querySelectorAll('section#sezioni input:checked').length === 1, null, { timeout: 5000 }); // solo Programma
     assert.equal(await page.locator('section#sezioni').getByRole('button', { name: 'Torna al solo Programma' }).count(), 0);
-    // elimina l'allenamento di prova (senza Drive collegato: solo dal telefono)
+    // l'allenamento di prova è rimasto vuoto: uscendo viene scartato, in home c'è solo quello di prima
     await page.goto(BASE + '#/'); await ready();
-    await page.locator('.rec-card').nth(1).waitFor();
+    await page.locator('.rec-card').first().waitFor();
     await settle(300);
-    const n0 = await page.locator('.rec-card').count();
-    const card = page.locator('.rec-card').filter({ hasNotText: '24/11/2026' }).first();
-    await card.getByRole('button', { name: 'Altre azioni' }).click();
-    await card.getByRole('button', { name: '🗑 Elimina' }).click();
-    await page.locator('dialog.modal').getByText('eliminare definitivamente dal telefono?').waitFor();
-    await page.locator('dialog.modal').getByRole('button', { name: 'Elimina' }).click();
-    await page.waitForFunction((n) => document.querySelectorAll('.rec-card').length === n - 1, n0);
+    assert.equal(await page.locator('.rec-card').count(), 1, 'allenamento nuovo vuoto non salvato');
+    assert.equal(await page.locator('.rec-card').filter({ hasNotText: '24/11/2026' }).count(), 0);
     await page.goto(sessionUrl); await ready();
   });
 
