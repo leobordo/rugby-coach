@@ -916,21 +916,39 @@ export function preparePicker() { return auth && navigator.onLine ? auth.preload
 export function pickerReady() { return !!(auth && auth.pickerIsReady()); }
 export function groupForInvite(inv) { return groupsCache.find((g) => g.manifestId === inv.manifestId && g.status === 'ok') || null; }
 
-// IMPORTANTE: chiamata in modo sincrono dal tocco (il Picker si apre subito, come l'accesso a Google)
-export function joinGroupNow(inv) {
-  const picked = auth.pickFilesNow(pickIds(inv));
+// File del gruppo che questo account non può ancora aprire. Con drive.file l'app apre i file creati da lei per
+// questo account (anche su un altro dispositivo: chi ha creato il gruppo non deve scegliere nulla) e quelli scelti
+// nella finestra di Google (la scelta resta valida: chi li ha già scelti una volta non deve rifarlo).
+export async function groupMissingFiles(inv) {
+  const need = [inv.manifestId, ...inv.fileIds];
+  const res = await Promise.all(need.map(async (id) => {
+    try { await drive.getFile(id, 'id'); return null; } catch (e) { if (isAccessError(e)) return id; throw e; }
+  }));
+  return res.filter(Boolean);
+}
+
+// Ingresso quando tutti i file si aprono già (nessuna finestra di Google)
+export async function joinGroupDirect(inv) {
+  await ensureMe();
+  const g = await groupsCore().joinGroup(inv);
+  g.status = 'ok';
+  await putGroup(g);
+  await runGroups();
+  runNow({ force: true });
+  return g;
+}
+
+// IMPORTANTE: chiamata in modo sincrono dal tocco (il Picker si apre subito, come l'accesso a Google).
+// `ids`: i file da mostrare (la prima volta tutti, cartelle comprese; poi solo quelli che mancano). Si possono
+// scegliere anche uno alla volta (sul telefono la finestra di Google non permette di sceglierne più insieme):
+// dopo la scelta conta quali file si aprono davvero; se ne mancano ancora risolve con { missing }.
+export function joinGroupNow(inv, ids = pickIds(inv)) {
+  const picked = auth.pickFilesNow(ids, { title: 'Seleziona i file del gruppo e tocca «Seleziona»' });
   return (async () => {
-    const ids = await picked;
-    if (!ids) return { cancelled: true };
-    const need = [inv.manifestId, ...inv.fileIds];
-    if (!need.every((id) => ids.includes(id))) throw new GroupError('missingFiles');
-    await ensureMe();
-    const g = await groupsCore().joinGroup(inv);
-    g.status = 'ok';
-    await putGroup(g);
-    await runGroups();
-    runNow({ force: true });
-    return { group: g };
+    if (!(await picked)) return { cancelled: true };
+    const missing = await groupMissingFiles(inv);
+    if (missing.length) return { missing };
+    return { group: await joinGroupDirect(inv) };
   })();
 }
 

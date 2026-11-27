@@ -228,20 +228,45 @@ export async function joinView(root, params, query) {
       box.append(b, msg);
       return;
     }
-    box.append(h('h3', '2. Scegli i file del gruppo'),
-      h('p', 'Si apre una finestra di Google con i file del gruppo: selezionali ', h('strong', 'tutti'), ' e tocca ', h('strong', 'Seleziona'), '.'));
+    // 2. I file del gruppo. Se si aprono già (stesso account di chi ha creato il gruppo, o file già scelti una volta)
+    // si entra subito, senza la finestra di Google; altrimenti la finestra, anche un file alla volta.
+    const retry = () => h('button.btn', { type: 'button', on: { click: () => { missing = null; joinError = ''; msg.textContent = ''; render(); } } }, 'Riprova');
+    if (joinError) { box.append(h('p.join-msg', { role: 'status' }, joinError), retry()); return; }
+    if (missing === null) {
+      box.append(h('p', 'Controllo i file del gruppo…'), msg);
+      if (!checking) {
+        checking = sync.groupMissingFiles(inv).then((m) => { missing = m; }, (e) => { joinError = sync.groupErrorMessage(e, inv.admin); })
+          .finally(() => { checking = null; if (box.isConnected) render(); });
+      }
+      return;
+    }
+    if (!missing.length) {
+      box.append(h('p', 'Entro nel gruppo…'), msg);
+      if (!joining) {
+        joining = sync.joinGroupDirect(inv).then((g) => { toast(`Sei nel gruppo "${g.name}".`, 'ok', 5000); }, (e) => { joinError = sync.groupErrorMessage(e, inv.admin); })
+          .finally(() => { joining = null; if (box.isConnected) render(); });
+      }
+      return;
+    }
+    const label = pickedOnce ? `Apri i file che mancano (${missing.length})` : 'Apri i file del gruppo';
+    box.append(h('h3', '2. Scegli i file del gruppo'), pickedOnce
+      ? h('p', `Mancano ancora ${missing.length} file del gruppo: tocca il pulsante, scegli un file e tocca `, h('strong', 'Seleziona'), '. Ripeti finché non sei dentro.')
+      : h('p', 'Si apre una finestra di Google con i file del gruppo: selezionali e tocca ', h('strong', 'Seleziona'), '. Se non riesci a sceglierne più di uno insieme (succede sul telefono), scegline uno: poi l\'app ti chiede gli altri.'));
     const b = h('button.btn.primary.big', { type: 'button', disabled: !sync.pickerReady(), on: { click: () => {
       let p;
-      try { p = sync.joinGroupNow(inv); } catch (e) { msg.textContent = sync.groupErrorMessage(e, inv.admin); return; } // subito, dentro il tocco
-      b.disabled = true; msg.textContent = 'Entro nel gruppo…';
+      try { p = sync.joinGroupNow(inv, pickedOnce ? missing : undefined); } catch (e) { msg.textContent = sync.groupErrorMessage(e, inv.admin); return; } // subito, dentro il tocco
+      b.disabled = true; msg.textContent = 'Controllo i file scelti…';
       p.then((res) => {
         if (res && res.cancelled) { msg.textContent = `Se nella finestra non vedevi nessun file, chiedi a ${inv.admin || 'chi ha creato il gruppo'} di invitarti con la tua email Gmail, poi riapri il link.`; return; }
+        if (res && res.missing) { pickedOnce = true; missing = res.missing; msg.textContent = ''; render(); return; }
         toast(`Sei nel gruppo "${res.group.name}".`, 'ok', 5000);
         render();
       }, (e) => { msg.textContent = sync.groupErrorMessage(e, inv.admin); }).finally(() => { b.disabled = false; });
-    } } }, sync.pickerReady() ? 'Apri i file del gruppo' : 'Preparazione…');
-    if (!sync.pickerReady()) sync.preparePicker().then(() => { b.disabled = false; b.textContent = 'Apri i file del gruppo'; }, () => { msg.textContent = 'Non riesco a raggiungere Google. Riprova tra poco.'; });
+    } } }, sync.pickerReady() ? label : 'Preparazione…');
+    if (!sync.pickerReady()) sync.preparePicker().then(() => { b.disabled = false; b.textContent = label; }, () => { msg.textContent = 'Non riesco a raggiungere Google. Riprova tra poco.'; });
     box.append(b, msg);
   };
+  let missing = null; // file del gruppo che questo account non apre ancora (null = da controllare)
+  let pickedOnce = false, checking = null, joining = null, joinError = '';
   render();
 }

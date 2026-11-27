@@ -19,6 +19,10 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 
 ## What's new
 
+**1.9.1** — joining a group from a phone
+- Opening a group link with the same Google account that created the group (for example on your phone after creating it on the computer) now joins straight away, without the Google file window.
+- Other coaches can pick the group files one at a time: on phones Google's window does not allow selecting several files together, so after each pick the app shows "Apri i file che mancano (n)" (open the missing files) with only the files still needed. Coaches who already picked the files once rejoin directly.
+
 **1.9.0** — squad list on phones and "my age groups"
 - The squad list shows only the shirt number (if any) and the name. Tapping a name opens its fields below the row (name, number, age group, group) with "✓ Fine" (done); the "⋯" menu offers Edit and Delete. No more broken rows on phones.
 - New **Impostazioni › Le mie categorie** (my age groups): pick the age groups you coach and the others disappear from the squad tabs, the filters, the category buttons, the attendance rows and the lists (sessions, matches, plans, drills). Nothing is deleted: a short note under the list says how many items are hidden, with a link to change the choice. Items without an age group are always shown; values already used by a sheet never disappear from its choices. The setting is per device.

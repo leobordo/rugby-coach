@@ -135,7 +135,8 @@ rosa**. Serve Google Drive collegato (ognuno con il proprio account Google).
   gruppo, che vedono tutti i membri. La sottocartella **File per l'app** serve all'app: non aprirla e non modificarla.
 - **Invitare**: nella pagina del gruppo tocca **↗ Invita con un messaggio** e manda il link (WhatsApp, email…).
 - **Entrare**: apri il link sul telefono (va bene anche se non hai mai usato l'app), tocca **Accedi con Google**,
-  poi **Apri i file del gruppo**: nella finestra di Google selezionali **tutti** e tocca **Seleziona**.
+  poi **Apri i file del gruppo**: nella finestra di Google selezionali e tocca **Seleziona**. Se dal telefono riesci
+  a sceglierne solo uno alla volta va bene: l'app ti mostra **Apri i file che mancano** finché non sei dentro.
   Se nella finestra non vedi nessun file, chiedi a chi ha creato il gruppo di invitarti **per email** (la tua Gmail),
   poi riapri il link.
 - **Usare il gruppo**: in alto a Schede, Libreria e Rosa scegli **Personale** o il nome del gruppo; quello che crei
@@ -155,7 +156,8 @@ rosa**. Serve Google Drive collegato (ognuno con il proprio account Google).
 - **Uscire**: nella pagina del gruppo **Esci dal gruppo**: gli elementi del gruppo spariscono dal tuo dispositivo
   (restano agli altri); le tue schede personali non cambiano.
 - **Sugli altri tuoi dispositivi**: il link del gruppo è sempre nella pagina del gruppo; aprilo sul computer o su un
-  altro telefono con lo stesso account Google per avere il gruppo anche lì.
+  altro telefono con lo stesso account Google per avere il gruppo anche lì. Se il gruppo l'hai creato tu entri
+  subito, senza scegliere file.
 - **I documenti Word nella cartella del gruppo** li aggiorna chi ha creato ciascuna scheda, quando apre l'app: se ti
   serve subito la versione più recente usa **↗ Condividi**, che crea sempre il documento aggiornato.
 - **Se chi ha creato il gruppo lo elimina** (o smette di usarlo), il gruppo non funziona più: l'app lo dice

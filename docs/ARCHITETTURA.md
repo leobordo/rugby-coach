@@ -110,6 +110,11 @@ app/
   `#/unisciti?g=<manifest>&f=<4 file>&d=<sottocartella>&c=<cartella>&n=<nome>&a=<amministratore>`; chi entra apre
   il Picker (`DocsView.setFileIds`, multiselezione, cartelle incluse, dentro il tocco, dimensionato sullo schermo),
   seleziona i 7 elementi una volta; l'app scrive il membro nel manifest (unione per email, controllo `version`).
+  Dalla v1.9.1 prima del Picker `groupMissingFiles` prova `files.get` sui 5 file dati: se si aprono tutti (stesso
+  account di chi ha creato il gruppo, anche su un altro dispositivo, o file già scelti in passato) l'ingresso è
+  diretto (`joinGroupDirect`), senza Picker. Altrimenti il Picker; dopo la scelta conta l'accesso reale, non gli id
+  restituiti: se mancano file, "Apri i file che mancano (n)" riapre il Picker con solo quelli (sul telefono la
+  multiselezione del Picker non funziona, così basta scegliere un file alla volta).
   Chiudi inviti: permessi `user/writer` per membri e invitati, poi via `anyone`; riapri: di nuovo `anyone`;
   togli membro: `removed` nel manifest + permesso tolto; esci: `removed` (left) e pulizia locale.
   Ricezione: stesso giro della v1.5 (`runOnce` → `runGroups` dopo la ricezione personale): per ogni gruppo

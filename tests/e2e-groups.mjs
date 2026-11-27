@@ -60,9 +60,10 @@ window.google = window.google || {};
     d.style.cssText = 'position:fixed;left:8px;top:8px;width:' + o.size[0] + 'px;height:' + o.size[1] + 'px;background:#fff;z-index:9999;border:2px solid #333;padding:12px;overflow:auto;box-sizing:border-box';
     const t = document.createElement('h2'); t.textContent = o.title; d.append(t);
     if (!vis.length) { const p = document.createElement('p'); p.textContent = 'Nessun file'; d.append(p); }
-    for (const f of vis) { const li = document.createElement('div'); li.className = 'fp-file'; li.textContent = f.name; d.append(li); }
+    const chosen = new Set(); // tocco su un file: si sceglie solo quello (come sul telefono); nessun tocco: tutti
+    for (const f of vis) { const li = document.createElement('div'); li.className = 'fp-file'; li.textContent = f.name; li.onclick = () => { if (chosen.has(f.id)) chosen.delete(f.id); else chosen.add(f.id); li.classList.toggle('on', chosen.has(f.id)); }; d.append(li); }
     const sel = document.createElement('button'); sel.textContent = 'Seleziona'; sel.disabled = !vis.length;
-    sel.onclick = async () => { await fetch('https://www.googleapis.com/__picker/grant', { method: 'POST', headers: { Authorization: 'Bearer ' + o.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: vis.map((f) => f.id) }) }); d.remove(); o.cb({ action: 'picked', docs: vis.map((f) => ({ id: f.id, name: f.name })) }); };
+    sel.onclick = async () => { const pick = chosen.size ? vis.filter((f) => chosen.has(f.id)) : vis; await fetch('https://www.googleapis.com/__picker/grant', { method: 'POST', headers: { Authorization: 'Bearer ' + o.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: pick.map((f) => f.id) }) }); d.remove(); o.cb({ action: 'picked', docs: pick.map((f) => ({ id: f.id, name: f.name })) }); };
     const an = document.createElement('button'); an.textContent = 'Annulla'; an.onclick = () => { d.remove(); o.cb({ action: 'cancel' }); };
     d.append(sel, an); document.body.append(d);
   }
@@ -175,8 +176,35 @@ try {
   await joinWithPicker(C);
   const pickerBox = await C.locator('.fake-picker').boundingBox();
   assert.ok(pickerBox.x >= 0 && pickerBox.x + pickerBox.width <= 390 && pickerBox.y + pickerBox.height <= 844, 'il Picker sta nello schermo del telefono: ' + JSON.stringify(pickerBox));
+  // sul telefono la finestra di Google sceglie un file alla volta: prima le due cartelle, poi l'app chiede i file che mancano
+  console.log('• C sceglie solo le cartelle, poi un file alla volta');
+  await C.locator('.fake-picker .fp-file', { hasText: 'Rugby Coach – Squadra U12' }).click();
+  await C.locator('.fake-picker .fp-file', { hasText: "File per l'app" }).click();
   await C.locator('.fake-picker').getByRole('button', { name: 'Seleziona' }).click();
+  for (let left = 5; left > 0; left--) {
+    const more = C.getByRole('button', { name: `Apri i file che mancano (${left})` });
+    await more.waitFor({ timeout: 15000 });
+    if (left === 5) { await C.getByText('Mancano ancora 5 file del gruppo').waitFor(); await shot(C, '62b-telefono-file-che-mancano'); await scan(C, 'file che mancano C'); }
+    await more.click();
+    await C.locator('.fake-picker').waitFor({ timeout: 10000 });
+    assert.equal(await C.locator('.fake-picker .fp-file').count(), left, 'la finestra mostra solo i file che mancano');
+    await C.locator('.fake-picker .fp-file').first().click();
+    await C.locator('.fake-picker').getByRole('button', { name: 'Seleziona' }).click();
+  }
   await C.getByText('Sei nel gruppo "Squadra U12"').first().waitFor({ timeout: 20000 });
+  assert.equal(await C.evaluate(() => window.__picker.length), 6, 'una finestra per le cartelle e una per ogni file');
+
+  // ---------------- A su un altro dispositivo, stesso account: entra senza la finestra di Google ----------------
+  console.log('• A apre il link sul computer (stesso account): entra subito, senza scegliere file');
+  const A2 = await device('A2', 'anna@example.com', 'Anna');
+  await connect(A2);
+  await A2.goto(invUrl); await ready(A2);
+  await A2.getByText('Sei nel gruppo "Squadra U12"').first().waitFor({ timeout: 20000 });
+  assert.equal(await A2.evaluate(() => (window.__picker || []).length), 0, 'nessuna finestra di Google per chi ha creato il gruppo');
+  await A2.getByRole('link', { name: 'Vai alle schede del gruppo' }).click();
+  await A2.waitForURL(/gruppo=/);
+  await shot(A2, '62c-pc-stesso-account-nel-gruppo');
+  await A2.context().close();
 
   // ---------------- tutti modificano ----------------
   console.log('• tutti modificano: scheda (A), esercizio (B), giocatore (C, avviso minori), piano (A); spostamento (C)');
@@ -338,10 +366,9 @@ try {
   await confirmModal(A, 'Riapri comunque');
   await waitUntil(() => gf.perms.some((p) => p.type === 'anyone'), 'inviti riaperti di nuovo');
   await D.goto(BASE + '#/'); await D.goto(invUrl); await ready(D);
-  await joinWithPicker(D);
-  assert.equal(await D.locator('.fake-picker .fp-file').count(), 7, 'a inviti riaperti D vede di nuovo i file…');
-  await D.locator('.fake-picker').getByRole('button', { name: 'Seleziona' }).click();
+  // a inviti riaperti D apre di nuovo i file (li aveva già scelti): niente finestra, ma l'app non lo fa rientrare
   await D.getByText(/Sei stato tolto da questo gruppo: per rientrare chiedi a Anna/).waitFor({ timeout: 15000 });
+  assert.equal(await D.locator('.fake-picker').count(), 0, 'nessuna finestra: i file li aveva già scelti');
   await shot(D, '69-pc-tolto-non-rientra');
   const manNow = JSON.parse([...fd.files.values()].find((f) => f.appProperties?.rcPart === 'manifest').content);
   const dRow = manNow.members.find((m) => m.email === 'dario@example.com');
@@ -354,9 +381,7 @@ try {
   await A.getByRole('button', { name: 'Invita', exact: true }).click();
   await A.getByText('Invitato: ora mandagli il link.').waitFor({ timeout: 10000 });
   await D.goto(BASE + '#/'); await D.goto(invUrl); await ready(D);
-  await joinWithPicker(D);
-  await D.locator('.fake-picker').getByRole('button', { name: 'Seleziona' }).click();
-  await D.getByText('Sei nel gruppo "Squadra U12"').first().waitFor({ timeout: 20000 });
+  await D.getByText('Sei nel gruppo "Squadra U12"').first().waitFor({ timeout: 20000 }); // file già scelti: entra subito
   await waitUntil(() => has(D, 'exercises', (e) => e.name === 'Esercizio di Bruno' && e.groupId), 'D ha di nuovo gli elementi del gruppo');
   gf.trashed = true; // l'amministratore mette la cartella del gruppo nel cestino da Drive
   await D.goto(BASE + '#/impostazioni'); await ready(D);
