@@ -221,6 +221,10 @@ export function normalizeField(f) {
 
 const THUMB_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
 export function safeThumb(t) { return typeof t === 'string' && THUMB_RE.test(t) ? t : null; }
+// GIF animata dell'azione (solo disegni con più fasi): data URL GIF, al massimo ~600 KB di testo
+const ANIM_RE = /^data:image\/gif;base64,[A-Za-z0-9+/=]+$/;
+export const ANIM_MAX_CHARS = 600000;
+export function safeAnim(t) { return typeof t === 'string' && t.length <= ANIM_MAX_CHARS && ANIM_RE.test(t) ? t : null; }
 
 // Validazione/normalizzazione di un JSON di disegno (per riapertura e import)
 export function normalizeBoard(b) {
@@ -229,7 +233,11 @@ export function normalizeBoard(b) {
   out.field = normalizeField(b.field);
   out.items = (Array.isArray(b.items) ? b.items : []).map(sanitizeItem).filter(Boolean);
   const phases = sanitizePhases(b.phases, out.items);
-  if (phases.length) out.phases = phases; // i disegni senza fasi restano identici a prima
+  if (phases.length) { // i disegni senza fasi restano identici a prima
+    out.phases = phases;
+    const anim = safeAnim(b.anim);
+    if (anim) out.anim = anim;
+  }
   out.thumb = safeThumb(b.thumb);
   out.updatedAt = typeof b.updatedAt === 'string' ? b.updatedAt.slice(0, 40) : null;
   return out;
@@ -323,6 +331,19 @@ export function prunePhases(board) {
   const ids = new Set((board.items || []).filter(movable).map((i) => i.id));
   for (const ph of board.phases) for (const id of Object.keys(ph.pos)) if (!ids.has(id)) delete ph.pos[id];
   return board;
+}
+
+// Fotogrammi della GIF: pausa sulla fase 1, poi `steps` passi per ogni passaggio con una pausa su ogni fase.
+// Restituisce [{ k, f, delay }] (delay in centesimi di secondo): il fotogramma è boardBetween(board, k, f).
+export function animationFrames(board, { steps = 8, moveCs = 90, holdCs = 70, firstHoldCs = 100, lastHoldCs = 160 } = {}) {
+  const n = phaseCount(board);
+  if (n < 2) return [];
+  const out = [{ k: 0, f: 0, delay: firstHoldCs }];
+  const stepCs = Math.max(2, Math.round(moveCs / steps));
+  for (let k = 0; k < n - 1; k++) {
+    for (let s = 1; s <= steps; s++) out.push({ k, f: s / steps, delay: s < steps ? stepCs : k === n - 2 ? lastHoldCs : holdCs });
+  }
+  return out;
 }
 
 function sanitizePhases(list, items) {

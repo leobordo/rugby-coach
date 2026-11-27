@@ -42,7 +42,17 @@ app/
   giocatori, palla, coni, paletti e scudi; frecce, tratti e testi sono uguali in tutte le fasi. `boardBetween` interpola
   (partenza/arrivo morbidi) per "▶ Guarda" nell'editor; `removePhase` passa le posizioni della fase tolta alla
   successiva, così le fasi dopo non cambiano. `normalizeBoard` sanifica le fasi (solo id di pedine esistenti, numeri
-  validi) e non aggiunge la chiave ai disegni senza fasi; `prunePhases` al salvataggio. Miniatura e Word: fase 1.
+  validi) e non aggiunge la chiave ai disegni senza fasi; `prunePhases` al salvataggio. Miniatura PNG: fase 1.
+- **GIF dell'azione** (v1.7.1): al "✓ Salva" di un disegno con più fasi l'editor (`boardAnimation`) disegna i
+  fotogrammi di `animationFrames` (pausa sulla fase 1, 8 passi per passaggio, pausa su ogni fase) con lo stesso
+  percorso SVG → canvas della miniatura e li codifica con `board/gif.js` (puro, testato con un decodificatore
+  indipendente): tavolozza unica da 256 colori (i 128 più usati esatti, gli altri per taglio sulla mediana), LZW,
+  dal secondo fotogramma solo il rettangolo che cambia, fotogrammi uguali uniti. 480 px, se supera 350 KB si riprova
+  a 360 px, altrimenti niente animazione (avviso). Salvata nel disegno come `anim` (data URL GIF, `safeAnim`: solo
+  `data:image/gif;base64`, al massimo 600 000 caratteri; tenuta da `normalizeBoard` solo con le fasi). Nell'app
+  `drawingSrc` (common.js) mostra la GIF nella riga dell'esercizio, nella libreria e nella scelta dalla libreria
+  (immagine ferma con `prefers-reduced-motion`). Nel Word `defaultImageFor` usa la GIF (`ImageRun` tipo `gif`)
+  se c'è, altrimenti il PNG. Viaggia nei `.json` su Drive e nei file del gruppo come il resto del disegno.
 - Liste dinamiche che partono vuote (esercizi, righe di osservazione, righe libere del bilancio, attività del piano;
   la partita parte con una riga) e si allungano con "+".
 

@@ -2,9 +2,8 @@
 import { h, clear, textInput, numberInput, textArea, tagInput, categoryPicker, confirmDialog, toast } from '../ui.js';
 import * as repo from '../repo.js';
 import { CATEGORIES, newExercise, duplicateRecord, normName } from '../model.js';
-import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar } from './common.js';
+import { autosaver, pageHeader, drawingCell, shareButton, confirmDelete, scopeFilter, matchScope, newScopeFrom, groupBadge, scopeBar, drawingSrc } from './common.js';
 import * as sync from '../app-sync.js';
-import { safeThumb } from '../board/model.js';
 
 export async function libraryView(root, params, query) {
   const filters = { q: '', cat: query.get('cat') || '' };
@@ -33,7 +32,7 @@ export async function libraryView(root, params, query) {
     if (!items.length) grid.append(h('p.empty', all.length ? 'Nessun esercizio con questi filtri.' : 'La libreria è vuota.'));
     for (const e of items) {
       grid.append(h('a.ex-card', { href: '#/esercizio/' + e.id },
-        e.drawing && safeThumb(e.drawing.thumb) ? h('img.ex-thumb', { src: safeThumb(e.drawing.thumb), alt: 'Disegno ' + e.name }) : h('div.ex-thumb.none', 'Nessun disegno'),
+        drawingSrc(e.drawing) ? h('img.ex-thumb', { src: drawingSrc(e.drawing), alt: 'Disegno ' + e.name }) : h('div.ex-thumb.none', 'Nessun disegno'),
         h('strong', e.name || '(senza nome)'),
         h('small', [(e.categories || []).join(' '), e.durationMin ? e.durationMin + ' min' : ''].filter(Boolean).join(' · ') || ' '),
         e.example ? h('span.badge.example', 'esempio') : null, groupBadge(e)));

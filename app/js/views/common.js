@@ -3,7 +3,7 @@ import { h, clear, debounce, modal, toast, downloadBlob, confirmDialog } from '.
 import * as repo from '../repo.js';
 import * as sync from '../app-sync.js';
 import { openBoardEditor } from '../board/editor.js';
-import { safeThumb } from '../board/model.js';
+import { safeThumb, safeAnim } from '../board/model.js';
 import { recordTitle, sortCategories, normName, exerciseFromRow, deepClone, merge3, conflictCopy, sameRecordContent, scopeOf, authorName } from '../model.js';
 import { buildDocxFiles, loadDocx } from '../artifacts.js';
 import { shareOrDownload } from '../share.js';
@@ -235,14 +235,25 @@ export function finishButton(saver, { label = '✓ Fine', back = '#/' } = {}) {
   return h('div.finish-row', btn);
 }
 
+// Immagine da mostrare per un disegno: l'azione animata (GIF) se c'è, l'immagine fissa se non c'è
+// o se il telefono chiede di ridurre il movimento
+export function drawingSrc(drawing) {
+  if (!drawing) return null;
+  const still = safeThumb(drawing.thumb);
+  const anim = safeAnim(drawing.anim);
+  const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return anim && (!reduce || !still) ? anim : still;
+}
+
 // ---------- disegno (Tactic Board) in una cella ----------
 export function drawingCell(row, onChange, { title = 'Disegno', compact = false } = {}) {
   const wrap = h('div.drawing-cell' + (compact ? '.compact' : ''));
   const render = () => {
     clear(wrap);
-    if (row.drawing && safeThumb(row.drawing.thumb)) {
+    const src = drawingSrc(row.drawing);
+    if (src) {
       wrap.append(h('button.thumb-btn', { type: 'button', 'aria-label': 'Modifica disegno ' + title, on: { click: edit } },
-        h('img.thumb', { src: safeThumb(row.drawing.thumb), alt: 'Disegno: ' + title })));
+        h('img.thumb', { src, alt: 'Disegno: ' + title })));
     } else {
       wrap.append(h('button.btn.draw-btn', { type: 'button', on: { click: edit } }, '✎ Disegna'));
     }
@@ -270,7 +281,7 @@ export async function pickExercise({ category } = {}) {
     if (!items.length) listEl.append(h('p.empty', 'Nessun esercizio trovato. Crealo dalla Libreria o salva una riga con "Salva in libreria".'));
     for (const e of items) {
       listEl.append(h('button.pick-item', { type: 'button', on: { click: () => listEl.closest('dialog')._close(e) } },
-        e.drawing && safeThumb(e.drawing.thumb) ? h('img.pick-thumb', { src: safeThumb(e.drawing.thumb), alt: '' }) : h('span.pick-thumb.none', '—'),
+        drawingSrc(e.drawing) ? h('img.pick-thumb', { src: drawingSrc(e.drawing), alt: '' }) : h('span.pick-thumb.none', '—'),
         h('span.pick-text', h('strong', e.name), h('small', [(e.categories || []).join(' '), e.durationMin ? e.durationMin + ' min' : '', e.example ? 'esempio' : ''].filter(Boolean).join(' · ')))));
     }
   };

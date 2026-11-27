@@ -163,3 +163,24 @@ test('fasi: normalizzazione e pulizia (file importati, elementi eliminati, diseg
   assert.ok(svg.includes('class="ghosts"'));
   assert.ok(!svg.includes('<x>'));
 });
+
+test('animazione: sequenza dei fotogrammi e GIF salvata solo nei disegni con fasi', () => {
+  const b = B.newBoard();
+  const p = B.createItem('player', 1, 1, {}, b.items);
+  b.items.push(p);
+  assert.deepEqual(B.animationFrames(b), [], 'una sola fase: niente animazione');
+  B.addPhase(b, 0); B.addPhase(b, 1);
+  const fr = B.animationFrames(b);
+  assert.equal(fr.length, 1 + 2 * 8);
+  assert.deepEqual(fr[0], { k: 0, f: 0, delay: 100 }, 'pausa sulla fase 1');
+  assert.deepEqual(fr[8], { k: 0, f: 1, delay: 70 }, 'pausa sulla fase 2');
+  assert.deepEqual(fr[16], { k: 1, f: 1, delay: 160 }, 'pausa più lunga alla fine');
+  assert.ok(fr.slice(1, 8).every((x) => x.delay === 11));
+  const gif = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  assert.equal(B.safeAnim(gif), gif);
+  assert.equal(B.safeAnim('data:image/png;base64,AAAA'), null);
+  assert.equal(B.safeAnim('data:image/gif;base64,AA"onerror=x'), null);
+  assert.equal(B.safeAnim('data:image/gif;base64,' + 'A'.repeat(B.ANIM_MAX_CHARS)), null, 'troppo pesante');
+  assert.equal(B.normalizeBoard({ ...b, anim: gif }).anim, gif);
+  assert.equal('anim' in B.normalizeBoard({ ...b, phases: undefined, anim: gif }), false, 'senza fasi niente animazione');
+});

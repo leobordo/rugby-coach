@@ -248,6 +248,13 @@ try {
     await page.locator('.board-overlay').waitFor({ state: 'detached' });
     await page.locator('.t-plan img.thumb').first().waitFor();
     await settle();
+    // l'azione animata si vede nella scheda: GIF (con le pedine che si muovono), leggera
+    const src = await page.locator('.t-plan img.thumb').first().getAttribute('src');
+    assert.ok(src.startsWith('data:image/gif;base64,'), 'miniatura animata');
+    const gifKB = Math.round(src.length * 0.75 / 1024);
+    assert.ok(gifKB < 350, 'GIF di ' + gifKB + ' KB');
+    console.log('  GIF dell\'azione: ' + gifKB + ' KB');
+    assert.ok(await page.locator('.t-plan img.thumb').first().evaluate((img) => img.complete && img.naturalWidth > 0), 'la GIF si apre');
     // riaperto: la fase c'è ancora
     await page.locator('.t-plan .thumb-btn').first().click();
     await page.locator('.board-phases').getByText('Fase 1 di 2').waitFor();

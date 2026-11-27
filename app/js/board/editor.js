@@ -2,8 +2,11 @@
 import { h, clear, promptDialog, confirmDialog, modal, toast, downloadBlob, pickFile } from '../ui.js';
 import * as B from './model.js';
 import { renderContent, boardViewBox, renderSVG, exportSize } from './render.js';
+import { encodeGif, bytesToDataUrl } from './gif.js';
 
 const THUMB_PX = 720;
+const ANIM_PX = [480, 360]; // GIF: si prova a 480 px, se viene troppo pesante a 360
+const ANIM_MAX_BYTES = 350 * 1024;
 
 const ICONS = {
   select: '<path d="M6 3l12 9-5.5 1.2L16 20l-2.6 1.2-3-6.6L6 18z" fill="currentColor"/>',
@@ -42,7 +45,7 @@ const TOOLS = [
 
 const PEN_COLORS = ['#111111', '#ffeb3b', '#ffffff', '#e53935', '#1e88e5'];
 
-export function svgToPngDataUrl(svgString, width, height) {
+function svgToCanvas(svgString, width, height) {
   return new Promise((resolve, reject) => {
     const blob = new Blob([svgString], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
@@ -56,7 +59,7 @@ export function svgToPngDataUrl(svgString, width, height) {
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
         URL.revokeObjectURL(url);
-        resolve(c.toDataURL('image/png'));
+        resolve(c);
       } catch (e) { reject(e); }
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Impossibile creare la miniatura')); };
@@ -64,16 +67,38 @@ export function svgToPngDataUrl(svgString, width, height) {
   });
 }
 
+export async function svgToPngDataUrl(svgString, width, height) {
+  return (await svgToCanvas(svgString, width, height)).toDataURL('image/png');
+}
+
 export async function boardThumbnail(board) {
   const { width, height } = exportSize(board, THUMB_PX);
   return svgToPngDataUrl(renderSVG(board, { pxWidth: THUMB_PX }), width, height);
+}
+
+// GIF animata dell'azione (disegni con più fasi). Restituisce i byte, oppure null se resta troppo pesante.
+export async function boardAnimation(board) {
+  const frames = B.animationFrames(board);
+  if (!frames.length) return null;
+  for (const px of ANIM_PX) {
+    const { width, height } = exportSize(board, px);
+    const list = [];
+    for (const fr of frames) {
+      const b = fr.f === 0 ? B.boardAtPhase(board, fr.k) : B.boardBetween(board, fr.k, fr.f);
+      const c = await svgToCanvas(renderSVG(b, { pxWidth: px }), width, height);
+      list.push({ data: c.getContext('2d').getImageData(0, 0, width, height).data, delay: fr.delay });
+    }
+    const bytes = encodeGif(width, height, list);
+    if (bytes.length <= ANIM_MAX_BYTES) return bytes;
+  }
+  return null;
 }
 
 // Apre l'editor. Restituisce: { board } se salvato, { removed: true } se il disegno è stato eliminato, null se annullato.
 export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
   return new Promise((resolve) => {
     let board = B.normalizeBoard(drawing ? JSON.parse(JSON.stringify(drawing)) : B.newBoard());
-    delete board.thumb;
+    delete board.thumb; delete board.anim; // immagine e animazione si rifanno al salvataggio
     const history = new B.History(board);
     let tool = 'select';
     let selectedId = null;
@@ -98,6 +123,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
     const toolbar = h('div.board-tools', { role: 'toolbar', 'aria-label': 'Strumenti' });
     const ctxBar = h('div.board-ctx');
     const phaseBar = h('div.board-phases', { role: 'group', 'aria-label': 'Fasi dell\'azione' });
+    const saveBtn = h('button.btn.primary', { type: 'button', on: { click: () => save() } }, '✓ Salva');
     const overlay = h('div.board-overlay', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       h('div.board-top',
         h('button.btn', { type: 'button', on: { click: () => cancel() } }, '✕ Chiudi'),
@@ -109,7 +135,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
             draw();
           } } }, '⟲ Vista'),
           h('button.btn', { type: 'button', on: { click: () => fieldPanel() } }, '⚙ Campo'),
-          h('button.btn.primary', { type: 'button', on: { click: () => save() } }, '✓ Salva'))),
+          saveBtn)),
       h('div.board-main', toolbar, h('div.board-stage', svg)),
       phaseBar,
       ctxBar,
@@ -250,6 +276,7 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
       if (!sel) {
         ctxBar.append(h('span.ctx-hint', tool === 'select' ? 'Tocca o clicca un elemento per selezionarlo e trascinarlo.' : TOOLS.find((t) => t.id === tool).label + ': tocca o clicca sul campo, oppure trascina.'),
           h('button.btn.small', { type: 'button', on: { click: exportPng } }, 'Scarica immagine'),
+          B.phaseCount(board) > 1 ? h('button.btn.small', { type: 'button', on: { click: exportGif } }, 'Scarica animazione') : null,
           h('button.btn.small', { type: 'button', on: { click: exportJson } }, 'Salva disegno su file'),
           h('button.btn.small', { type: 'button', on: { click: importJson } }, 'Apri disegno da file'),
           h('button.btn.small.danger', { type: 'button', on: { click: clearAll } }, 'Cancella tutto'));
@@ -298,6 +325,12 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
       const url = await boardThumbnail(board);
       const blob = await (await fetch(url)).blob();
       downloadBlob(blob, (title || 'disegno').replace(/[\\/:*?"<>|]+/g, '-') + '.png');
+    }
+    async function exportGif() {
+      toast('Preparo l\'animazione…', 'info');
+      const bytes = await boardAnimation(B.prunePhases(JSON.parse(JSON.stringify(board))));
+      if (!bytes) { toast('Animazione troppo lunga da scaricare: togli qualche fase.', 'error', 5000); return; }
+      downloadBlob(new Blob([bytes], { type: 'image/gif' }), (title || 'disegno').replace(/[\\/:*?"<>|]+/g, '-') + '.gif');
     }
     function exportJson() {
       downloadBlob(new Blob([JSON.stringify(board, null, 2)], { type: 'application/json' }), (title || 'disegno').replace(/[\\/:*?"<>|]+/g, '-') + '.json');
@@ -516,13 +549,23 @@ export function openBoardEditor(drawing, { title = 'Tactic Board' } = {}) {
         if (await confirmDialog('Il disegno è vuoto. Vuoi eliminarlo dalla scheda?', { okText: 'Elimina disegno', danger: true })) { close({ removed: true }); }
         return;
       }
+      if (saveBtn.disabled) return; // salvataggio già in corso (l'animazione richiede qualche secondo)
+      saveBtn.disabled = true;
       try {
         stopPlay();
         const out = B.prunePhases(JSON.parse(JSON.stringify(board)));
         out.updatedAt = new Date().toISOString();
         out.thumb = await boardThumbnail(out);
+        delete out.anim;
+        if (B.phaseCount(out) > 1) {
+          toast('Preparo l\'animazione…', 'info');
+          const bytes = await boardAnimation(out);
+          if (bytes) out.anim = bytesToDataUrl(bytes);
+          else toast('Animazione troppo lunga: nella scheda e nel Word resta l\'immagine.', 'info', 5000);
+        }
         close({ board: out });
       } catch (e) {
+        saveBtn.disabled = false;
         toast('Errore nel salvataggio del disegno: ' + e.message, 'error');
       }
     }

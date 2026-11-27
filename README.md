@@ -23,7 +23,12 @@ A just-for-fun side project I built to help me coach youth and mini rugby. It tu
 - A drawing can now have up to 8 **phases**: tap "+ Fase", drag the players to where they go next, and repeat. In each phase a faded copy and a dotted trail show where the players were in the previous one.
 - "▶ Guarda" (watch) animates the play inside the board editor, with smooth movement from one phase to the next.
 - Arrows, freehand lines and text stay the same in every phase. Drawings without phases are unchanged, and the thumbnail and Word document show phase 1.
-- Coming next: an animated GIF of the play, shown in the app and inside the Word document.
+
+**1.7.1** — animated GIF of the play
+- When a drawing with phases is saved, the app builds an animated GIF of the play and shows it wherever the drawing appears: in the session sheet, in the drill library and in the "from library" picker. With "reduce motion" turned on, the still image is shown instead.
+- The GIF also goes into the Word document. Word on a computer plays it; print, PDF and apps without animation support show the first phase.
+- "Scarica animazione" (download animation) in the board editor saves the GIF to share it on WhatsApp or by email.
+- The GIF encoder is a small dependency-free module (`app/js/board/gif.js`): one shared palette and, after the first frame, only the area that changes. A typical play weighs 10–30 KB (hard limit 350 KB, retried at a smaller size).
 
 **1.6.3** — desktop layout
 - One content width for every page (up to 1360 px), with the logo and menu in the top bar aligned to the same column; no more pages stretched edge to edge on some screens and centred on others.

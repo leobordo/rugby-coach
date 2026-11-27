@@ -34,12 +34,27 @@ export function pngSize(bytes) {
   return { width: dv.getUint32(16), height: dv.getUint32(20) };
 }
 
+export function gifSize(bytes) {
+  if (!bytes || bytes.length < 10) return null;
+  const sig = [0x47, 0x49, 0x46, 0x38]; // GIF8
+  for (let i = 0; i < 4; i++) if (bytes[i] !== sig[i]) return null;
+  return { width: bytes[6] | (bytes[7] << 8), height: bytes[8] | (bytes[9] << 8) };
+}
+
+const GIF_RE = /^data:image\/gif;base64,[A-Za-z0-9+/=]+$/;
+// Azione animata (GIF) se c'è: Word sul PC la mostra animata, in stampa si vede il primo fotogramma (la fase 1)
 export function defaultImageFor(drawing) {
-  if (!drawing || !drawing.thumb) return null;
+  if (!drawing) return null;
+  if (typeof drawing.anim === 'string' && GIF_RE.test(drawing.anim)) {
+    const data = dataUrlToBytes(drawing.anim);
+    const size = gifSize(data);
+    if (size && size.width && size.height) return { data, type: 'gif', ...size };
+  }
+  if (!drawing.thumb) return null;
   const data = dataUrlToBytes(drawing.thumb);
   const size = pngSize(data);
   if (!size) return null;
-  return { data, ...size };
+  return { data, type: 'png', ...size };
 }
 
 // ---------- builder ----------
@@ -99,7 +114,7 @@ export function createBuilder(docx, ctx = {}) {
     if (!img) return null;
     const maxW = maxWidthCm * 37.8, maxH = maxHeightCm * 37.8; // px a 96 dpi
     const k = Math.min(maxW / img.width, maxH / img.height);
-    return new Paragraph({ children: [new ImageRun({ type: 'png', data: img.data, transformation: { width: Math.round(img.width * k), height: Math.round(img.height * k) } })], spacing: { before: 40, after: 40 } });
+    return new Paragraph({ children: [new ImageRun({ type: img.type || 'png', data: img.data, transformation: { width: Math.round(img.width * k), height: Math.round(img.height * k) } })], spacing: { before: 40, after: 40 } });
   };
 
   const section = (children, { landscape, margins }) => ({

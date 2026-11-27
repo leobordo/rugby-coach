@@ -36,7 +36,11 @@ Così si apre con un tocco come le altre app e funziona anche senza Internet.
    Vedi in trasparenza dove erano prima. Ripeti per le fasi dopo (fino a 8).
 3. Con **‹ ›** passi da una fase all'altra; **🗑 Fase** toglie la fase che stai guardando.
 4. Tocca **▶ Guarda**: le pedine si muovono da una fase all'altra. **■ Ferma** la interrompe.
-5. Tocca **✓ Salva**. Nella scheda e nel Word si vede la Fase 1.
+5. Tocca **✓ Salva** (con più fasi ci vuole qualche secondo: l'app prepara l'animazione).
+   Nella scheda, nella libreria e nel documento Word l'azione si vede **animata**. In stampa, e nelle app che non
+   mostrano le animazioni, si vede la Fase 1. Se sul telefono hai attivato "riduci movimento", l'app mostra
+   l'immagine ferma.
+6. Per mandare l'azione su WhatsApp o per email: apri la lavagna e tocca **Scarica animazione**.
 
 ## Collegare Google Drive
 

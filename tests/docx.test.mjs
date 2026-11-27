@@ -6,7 +6,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import * as docx from '../app/vendor/docx.mjs';
 import { buildDocxFiles, buildArtifacts } from '../app/js/artifacts.js';
-import { pngSize, dataUrlToBytes } from '../app/js/docx-build.js';
+import { pngSize, gifSize, dataUrlToBytes } from '../app/js/docx-build.js';
+import { encodeGif, bytesToDataUrl } from '../app/js/board/gif.js';
 import { OUT, hasCmd, sampleSession, sampleMatch, samplePlan, boardWithThumb, M } from './fixtures.mjs';
 import { buildSeed } from '../app/js/seed.js';
 
@@ -140,4 +141,23 @@ test('i .docx si aprono con LibreOffice (conversione in PDF e PNG)', { skip: !ha
     assert.ok(fs.existsSync(pdf) && fs.statSync(pdf).size > 1000, 'PDF non generato per ' + f);
     if (hasCmd('pdftoppm')) execFileSync('pdftoppm', ['-png', '-r', '60', pdf, pdf.replace(/\.pdf$/, '')]);
   }
+});
+
+test('Word: un disegno con l\'azione animata entra come GIF (in stampa resta la fase 1)', async () => {
+  const W = 12, H = 8;
+  const data = new Uint8ClampedArray(W * H * 4).map((_, i) => (i % 4 === 3 ? 255 : i % 4 === 1 ? 120 : 30));
+  const anim = bytesToDataUrl(encodeGif(W, H, [{ data, delay: 50 }]));
+  assert.deepEqual(gifSize(dataUrlToBytes(anim)), { width: W, height: H });
+  assert.equal(gifSize(new Uint8Array([1, 2, 3])), null);
+  const s = M.newSession({ date: '2026-12-01' });
+  const b = boardWithThumb(0);
+  b.phases = [{ id: 'f1', pos: {} }];
+  b.anim = anim;
+  s.planItems.push(M.newPlanItem({ name: 'Azione animata', drawing: b }));
+  s.planItems.push(M.newPlanItem({ name: 'Disegno fermo', drawing: boardWithThumb(1) }));
+  const [f] = await writeDocs(s, 'gif');
+  const media = unzipList(f.path).filter((e) => e.startsWith('word/media/'));
+  assert.equal(media.filter((e) => e.endsWith('.gif')).length, 1, 'la GIF');
+  assert.equal(media.filter((e) => e.endsWith('.png')).length, 1, 'il disegno senza fasi resta PNG');
+  assert.ok(unzipText(f.path, '?Content_Types?.xml').includes('image/gif')); // [] sono caratteri jolly per unzip: ? li trova
 });
